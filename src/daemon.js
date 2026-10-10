@@ -16,6 +16,7 @@ const words = require('./words');
 const watchdog = require('./watchdog');
 
 const MIN = 60 * 1000;
+const VERSION = require('../package.json').version;
 
 function log(msg) {
   console.log(`${new Date().toISOString()} ${msg}`);
@@ -287,6 +288,7 @@ function status() {
     neverLock: cfg.NEVER_LOCK,
     limits: cfg.LIMITS,
     dev: cfg.DEV,
+    version: VERSION,
   };
 }
 

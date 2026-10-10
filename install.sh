@@ -111,4 +111,4 @@ curl -fs --max-time 1 http://localhost:7777/api/status >/dev/null || die "the se
 
 echo
 echo "Installed. Open http://localhost:7777"
-sudo -u "$USER_NAME" open "http://localhost:7777" || true
+[ -n "${TIME_NO_OPEN:-}" ] || sudo -u "$USER_NAME" open "http://localhost:7777" || true

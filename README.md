@@ -9,9 +9,12 @@ A Mac app and website blocker with a lock timer you can't click past. The contro
 ## Install
 
 ```sh
-sudo ./install.sh      # installs or updates; refuses while a lock is running
-sudo ./uninstall.sh    # removes everything; refuses while a lock is running
+./build-app.sh         # builds Time.app and copies it to /Applications
 ```
+
+Open **Time** from Applications and click **Install**. macOS asks for your password once to set up the background service. After that, the app shows the control page in its own window and keeps a lock countdown in the menu bar. **Time → Uninstall Background Service…** removes the service; it refuses while a lock is running.
+
+Without the app, the same scripts work from a terminal: `sudo ./install.sh` and `sudo ./uninstall.sh`.
 
 Logs are written to `/Library/Logs/Time.log`.
 

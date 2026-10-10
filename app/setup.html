@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up Time</title>
+<style>
+  :root {
+    --bg: #dfe5e1; --surface: #eef2ef; --text: #15211c; --soft: #56655e; --line: #c3cdc8;
+    --accent: #1d3a32; --on-accent: #f3f1e8; --alarm: #a5402a;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12271f; --surface: #18322a; --text: #e9ece6; --soft: #a3b3ab; --line: #2c4a40; --accent: #b98f3e; --on-accent: #1a1406; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 48px 16px;
+    background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, system-ui, sans-serif;
+  }
+  main { max-width: 480px; display: grid; gap: 18px; }
+  h1 { margin: 0; font: 800 30px/1.15 -apple-system, system-ui, sans-serif; letter-spacing: -0.01em; }
+  p { margin: 0; color: var(--soft); }
+  ul { margin: 0; padding-left: 18px; color: var(--soft); display: grid; gap: 6px; }
+  strong { color: var(--text); font-weight: 600; }
+  button {
+    justify-self: start; border: 0; border-radius: 10px; padding: 11px 22px; cursor: pointer;
+    background: var(--accent); color: var(--on-accent); font: 600 15px/1 -apple-system, system-ui, sans-serif;
+  }
+  button:disabled { opacity: 0.55; cursor: progress; }
+  button:focus-visible { outline: 2px solid #b98f3e; outline-offset: 3px; }
+  .error { color: var(--alarm); white-space: pre-wrap; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <div id="install">
+    <h1>Set up Time</h1>
+  </div>
+  <div id="update" hidden>
+    <h1>Update Time</h1>
+  </div>
+  <div id="starting" hidden>
+    <h1>Starting Time…</h1>
+    <p>The background service is starting up.</p>
+  </div>
+
+  <div id="details">
+    <p style="margin-bottom:12px">Time runs a small background service that does the blocking. Installing it:</p>
+    <ul>
+      <li>starts it at every boot, so locks hold through restarts</li>
+      <li>adds a hidden <strong>timekeeper</strong> admin account, used only by hard mode</li>
+      <li>blocks websites through your Mac's hosts file, in every browser</li>
+    </ul>
+  </div>
+  <button id="go">Install</button>
+  <p class="error" id="err" role="alert"></p>
+</main>
+<script>
+  const q = new URLSearchParams(location.search);
+  const mode = q.get('mode') || 'install';
+  for (const id of ['install', 'update', 'starting']) document.getElementById(id).hidden = id !== mode;
+  document.getElementById('details').hidden = mode === 'starting';
+  document.getElementById('go').hidden = mode === 'starting';
+  if (mode === 'update') document.getElementById('go').textContent = `Update to ${q.get('v')}`;
+
+  function setBusy(b) {
+    const go = document.getElementById('go');
+    go.disabled = b;
+    go.textContent = b ? 'Installing…' : (mode === 'update' ? `Update to ${q.get('v')}` : 'Install');
+    if (b) document.getElementById('err').textContent = '';
+  }
+  function showError(msg) { document.getElementById('err').textContent = msg; }
+  document.getElementById('go').onclick = () => window.webkit.messageHandlers.time.postMessage('install');
+</script>
+</body>
+</html>
