@@ -1,0 +1,292 @@
+'use strict';
+const $ = (id) => document.getElementById(id);
+const DURATIONS = [[30, '30 min'], [60, '1 h'], [120, '2 h'], [240, '4 h'], [480, '8 h'], [1440, '1 day']];
+
+let S = null;            // last status from the service
+let offset = 0;          // service's trusted time minus this browser's clock
+let chosen = 120;
+let appsLoaded = false;
+
+const serverNow = () => Date.now() + offset;
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Time': '1' }, body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);
+  return data;
+}
+
+function toast(msg, ok = false) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.toggle('ok', ok);
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => (t.textContent = ''), 6000);
+}
+
+async function act(path, body, okMsg) {
+  try {
+    apply(await api(path, body));
+    if (okMsg) toast(okMsg, true);
+    return true;
+  } catch (e) {
+    toast(e.message);
+    return false;
+  }
+}
+
+function hms(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+
+function when(ms) {
+  return new Date(ms).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+}
+
+function lockMinutes() {
+  const h = parseFloat($('customHours').value);
+  return Number.isFinite(h) && h > 0 ? Math.round(h * 60) : chosen;
+}
+
+// ---------- rendering ----------
+
+function drawTicks() {
+  const g = $('ticks');
+  for (let i = 0; i < 60; i++) {
+    const a = (i / 60) * Math.PI * 2;
+    const major = i % 5 === 0;
+    const r1 = 92, r2 = major ? 84 : 88;
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', 100 + r1 * Math.sin(a)); l.setAttribute('y1', 100 - r1 * Math.cos(a));
+    l.setAttribute('x2', 100 + r2 * Math.sin(a)); l.setAttribute('y2', 100 - r2 * Math.cos(a));
+    l.setAttribute('class', major ? 'tick major' : 'tick');
+    g.appendChild(l);
+  }
+}
+
+function renderChips() {
+  const box = $('chips');
+  box.innerHTML = '';
+  for (const [min, label] of DURATIONS) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.type = 'button';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(min === chosen && !$('customHours').value));
+    b.textContent = label;
+    b.onclick = () => { chosen = min; $('customHours').value = ''; renderChips(); renderDial(); };
+    box.appendChild(b);
+  }
+}
+
+function renderDial() {
+  if (!S) return;
+  const vault = document.querySelector('.vault');
+  const lock = S.lock;
+  const arc = $('dialArc');
+  if (lock) {
+    const left = lock.endsAt - serverNow();
+    const frac = Math.max(0, Math.min(1, left / (lock.endsAt - lock.startedAt)));
+    vault.classList.add('is-locked');
+    $('dialLabel').textContent = lock.hard ? 'Locked · hard mode' : 'Locked';
+    $('dialTime').textContent = hms(left);
+    $('dialSub').textContent = `opens ${when(lock.endsAt)}`;
+    arc.style.strokeDasharray = `${frac * 1000} 1000`;
+  } else {
+    vault.classList.remove('is-locked');
+    const on = S.blocks.filter((b) => b.enabled).length;
+    $('dialLabel').textContent = 'Open';
+    $('dialTime').textContent = hms(lockMinutes() * 60000);
+    $('dialSub').textContent = on ? `${on} block${on > 1 ? 's' : ''} on, not locked` : 'nothing blocked';
+    arc.style.strokeDasharray = '0 1000';
+  }
+}
+
+function renderBlocks() {
+  const list = $('blockList');
+  list.innerHTML = '';
+  for (const b of S.blocks) {
+    const li = document.createElement('li');
+    li.className = 'block' + (b.locked ? ' is-locked' : '');
+    const what = [
+      b.bundleIds.length ? 'Mac app' : null,
+      b.domains.length ? b.domains.slice(0, 3).join(', ') + (b.domains.length > 3 ? '…' : '') : null,
+    ].filter(Boolean).join(' · ');
+
+    const text = document.createElement('div');
+    text.className = 'block-text';
+    const name = document.createElement('div');
+    name.className = 'block-name';
+    name.textContent = b.name;
+    if (b.locked) {
+      const tag = document.createElement('span');
+      tag.className = 'lock-tag';
+      tag.textContent = 'locked';
+      name.appendChild(tag);
+    }
+    const sub = document.createElement('div');
+    sub.className = 'block-what';
+    sub.textContent = what;
+    text.append(name, sub);
+    if (b.custom && !b.enabled) {
+      const del = document.createElement('button');
+      del.className = 'del';
+      del.textContent = 'Delete';
+      del.onclick = () => act(`/api/custom/${b.id}/delete`, {}, `Deleted ${b.name}.`);
+      text.appendChild(del);
+    }
+
+    const bolt = document.createElement('button');
+    bolt.className = 'bolt';
+    bolt.setAttribute('role', 'switch');
+    bolt.setAttribute('aria-checked', String(b.enabled));
+    bolt.setAttribute('aria-label', `Block ${b.name}`);
+    bolt.disabled = b.locked;
+    bolt.title = b.locked ? `Locked until ${when(S.lock.endsAt)}` : b.enabled ? `Unblock ${b.name}` : `Block ${b.name}`;
+    bolt.onclick = () => act(`/api/blocks/${b.id}`, { enabled: !b.enabled });
+
+    li.append(text, bolt);
+    list.appendChild(li);
+  }
+  $('neverLock').textContent = `Never locked: ${S.neverLock.map((a) => a.name).join(', ')}.`;
+}
+
+function renderLock() {
+  const lock = S.lock;
+  $('lockPanel').hidden = !!lock;
+  $('lockedPanel').hidden = !lock;
+  $('emergency').hidden = !lock;
+  $('emCooldown').textContent = S.limits.emergencyCooldownMinutes;
+  if (lock) {
+    $('lockedTitle').textContent = lock.hard ? 'Locked in hard mode' : 'Locked';
+    $('lockedHint').textContent = `Until ${when(lock.endsAt)}. You can turn more blocks on, but nothing that's on can be turned off.`
+      + (lock.keepAfter ? ' They stay on after the timer ends.' : ' They turn off when the timer ends.')
+      + (lock.hard ? ' Your account is not an admin until then.' : '');
+    const em = lock.emergency;
+    $('emIdle').hidden = !!em;
+    $('emTyping').hidden = !(em && em.challenge);
+    $('emWaiting').hidden = !(em && em.unlockAt);
+    if (em && em.challenge && $('emChallenge').textContent !== em.challenge) {
+      $('emChallenge').textContent = em.challenge;
+      $('emInput').value = '';
+      updateProgress();
+    }
+  }
+  const on = S.blocks.some((b) => b.enabled);
+  $('lockBtn').disabled = !on;
+  $('lockBtn').textContent = on ? `Lock for ${lockLabel()}` : 'Turn a block on to lock it';
+  $('lockHint').textContent = on
+    ? "While locked, nothing that's on can be turned off until the timer runs out."
+    : 'Turn on at least one block below, then lock it.';
+  const c = $('clockState');
+  c.textContent = S.dev ? 'dev mode · nothing is really blocked' : S.clockSynced ? 'time checked online' : 'offline · lock time only counts while awake';
+  c.classList.toggle('offline', !S.clockSynced);
+}
+
+function renderEmergencyWait() {
+  const em = S?.lock?.emergency;
+  if (em && em.unlockAt) $('emWaitText').textContent = `Blocks lift in ${hms(em.unlockAt - serverNow())}. Cancel any time to stay locked.`;
+}
+
+function lockLabel() {
+  const m = lockMinutes();
+  const h = Math.floor(m / 60), mm = m % 60;
+  return h && mm ? `${h} h ${mm} min` : h ? `${h} h` : `${mm} min`;
+}
+
+function apply(status) {
+  S = status;
+  offset = S.now - Date.now();
+  renderBlocks();
+  renderLock();
+  renderDial();
+  renderEmergencyWait();
+}
+
+// ---------- emergency typing ----------
+
+function norm(s) { return s.trim().replace(/\s+/g, ' ').toLowerCase(); }
+
+function updateProgress() {
+  const target = norm($('emChallenge').textContent);
+  const typed = norm($('emInput').value);
+  let i = 0;
+  while (i < typed.length && typed[i] === target[i]) i++;
+  const wrong = i < typed.length;
+  $('emProgress').textContent = wrong
+    ? `Typo after "${typed.slice(Math.max(0, i - 12), i)}". Fix it to continue.`
+    : `${Math.floor((i / target.length) * 100)}% typed`;
+}
+
+for (const ev of ['paste', 'drop']) $('emInput').addEventListener(ev, (e) => { e.preventDefault(); toast('Pasting is off here. Type it out.'); });
+$('emInput').addEventListener('input', (e) => {
+  if (e.inputType && /insertFromPaste|insertFromDrop|insertReplacementText/.test(e.inputType)) $('emInput').value = '';
+  updateProgress();
+});
+$('emChallenge').addEventListener('copy', (e) => e.preventDefault());
+$('emStart').onclick = () => act('/api/emergency/start', {});
+$('emSubmit').onclick = () => act('/api/emergency/submit', { text: $('emInput').value }, 'Accepted. The cooldown has started.');
+$('emCancel').onclick = $('emCancel2').onclick = () => act('/api/emergency/cancel', {}, 'Staying locked.');
+
+// ---------- lock controls ----------
+
+$('customHours').addEventListener('input', () => { renderChips(); apply(S); });
+$('hardMode').addEventListener('change', (e) => {
+  if (e.target.checked && lockMinutes() > S.limits.maxHardLockMinutes) toast('Hard mode is capped at 72 hours.');
+});
+$('lockBtn').onclick = async () => {
+  const hard = $('hardMode').checked;
+  const label = lockLabel();
+  const msg = hard
+    ? `Lock for ${label} in hard mode?\n\nYour account won't be an admin until it ends. The only early way out is the emergency unlock.`
+    : `Lock for ${label}?\n\nYou won't be able to turn these blocks off until it ends.`;
+  if (!confirm(msg)) return;
+  $('lockBtn').disabled = true;
+  await act('/api/lock', { minutes: lockMinutes(), hardMode: hard, keepAfter: $('keepAfter').checked }, `Locked for ${label}.`);
+};
+document.querySelectorAll('[data-extend]').forEach((b) => {
+  b.onclick = () => act('/api/lock/extend', { minutes: +b.dataset.extend }, `Added ${b.textContent.slice(1)}.`);
+});
+
+// ---------- custom blocks ----------
+
+$('addDetails').addEventListener('toggle', async () => {
+  if (!$('addDetails').open || appsLoaded) return;
+  try {
+    const apps = await api('/api/apps');
+    const sel = $('addApps');
+    for (const a of apps.filter((x) => x.lockable)) {
+      const o = document.createElement('option');
+      o.value = a.bundleId;
+      o.textContent = a.name;
+      sel.appendChild(o);
+    }
+    appsLoaded = true;
+  } catch (e) { toast(e.message); }
+});
+$('addForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const ok = await act('/api/custom', {
+    name: $('addName').value,
+    bundleIds: [...$('addApps').selectedOptions].map((o) => o.value),
+    domains: $('addDomains').value.split(/[\s,]+/).filter(Boolean),
+  }, `Added ${$('addName').value}. Turn it on below.`);
+  if (ok) { $('addForm').reset(); }
+};
+
+// ---------- boot ----------
+
+drawTicks();
+renderChips();
+async function refresh() {
+  try { apply(await api('/api/status')); }
+  catch { $('clockState').textContent = 'The Time service is not running'; $('clockState').classList.add('offline'); }
+}
+refresh();
+setInterval(refresh, 5000);
+setInterval(() => { renderDial(); renderEmergencyWait(); }, 1000);

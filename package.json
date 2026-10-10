@@ -1,0 +1,22 @@
+{
+  "name": "time",
+  "version": "1.0.0",
+  "description": "Local app/site blocker with an un-skippable lock timer",
+  "main": "src/daemon.js",
+  "scripts": {
+    "dev": "TIME_DEV=1 node src/daemon.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ruben-hayrapetyan/Time.git"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ruben-hayrapetyan/Time/issues"
+  },
+  "homepage": "https://github.com/ruben-hayrapetyan/Time#readme",
+  "dependencies": {
+    "tlock-js": "^0.9.0"
+  },
+  "private": true
+}
