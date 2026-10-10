@@ -248,7 +248,7 @@ function renderBlocks() {
 // Called by Time.app around a Screen Time read.
 window.screenTimeBusy = (busy) => {
   $('stRefresh').disabled = busy;
-  $('stRefresh').textContent = busy ? 'Reading Screen Time…' : 'Refresh from Screen Time';
+  $('stRefresh').textContent = busy ? 'Reading Screen Time (about a minute)…' : 'Refresh from Screen Time';
 };
 window.screenTimeDone = (err, n) => {
   window.screenTimeBusy(false);

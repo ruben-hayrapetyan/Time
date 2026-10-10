@@ -346,6 +346,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     @objc func reload() { route() }
 }
 
+if CommandLine.arguments.contains("--read-screentime") {
+    // Developer check: run the real reader and save what it found.
+    let out = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Time/screentime-read.json")
+    do {
+        let items = try ScreenTimeReader().readAll()
+        try JSONEncoder().encode(items).write(to: out)
+    } catch {
+        try? Data("{\"error\": \"\(error.localizedDescription)\"}".utf8).write(to: out)
+    }
+    exit(0)
+}
+
 if let i = CommandLine.arguments.firstIndex(of: "--ax") {
     runAXSteps(Array(CommandLine.arguments[(i + 1)...]))
     exit(0)
