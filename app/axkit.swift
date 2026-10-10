@@ -204,6 +204,19 @@ func runAXSteps(_ steps: [String]) {
                 }
                 Thread.sleep(forTimeInterval: 1.5)
             } else { out.append("# pick \(arg): NOT FOUND") }
+        case "expand":
+            // Opens the disclosure triangle on the outline row labelled `arg` ("*" = every row).
+            if let w = ui.window {
+                let rows = AX.findAll(in: w) { AX.role($0) == "AXRow" && AX.children($0).contains { c in AX.children(c).contains { arg == "*" || AX.label($0) == arg } } }
+                var n = 0
+                for row in rows {
+                    if let tri = AX.find(in: row, maxDepth: 3, { AX.role($0) == "AXDisclosureTriangle" }), AX.str(tri, kAXValueAttribute) == "0" {
+                        AX.press(tri); n += 1
+                        Thread.sleep(forTimeInterval: 0.4)
+                    }
+                }
+                out.append("# expand \(arg): \(n) opened")
+            }
         case "wait":
             Thread.sleep(forTimeInterval: Double(arg) ?? 1)
         case "dump":

@@ -147,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         web.evaluateJavaScript("window.screenTimeBusy && screenTimeBusy(true)")
         DispatchQueue.global(qos: .userInitiated).async {
             var result: Result<[ScreenTimeItem], Error>
-            do { result = .success(try ScreenTimeReader().readActivity()) } catch { result = .failure(error) }
+            do { result = .success(try ScreenTimeReader().readAll()) } catch { result = .failure(error) }
             DispatchQueue.main.async {
                 // Put System Settings away and come back to Time.
                 NSRunningApplication.runningApplications(withBundleIdentifier: settingsBundleID).first?.hide()

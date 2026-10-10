@@ -77,7 +77,8 @@ function screenTimeBlocks() {
 
 function allBlocks() {
   const fromScreenTime = state.screenTime.importedAt ? screenTimeBlocks() : [];
-  const presets = cfg.PRESETS.map((b) => ({ ...b, custom: false, source: 'preset' }))
+  const sameApp = (p) => fromScreenTime.find((b) => b.shortName.toLowerCase() === p.name.toLowerCase() || b.shortName.toLowerCase() === p.id);
+  const presets = cfg.PRESETS.map((b) => ({ ...b, custom: false, source: 'preset', category: sameApp(b)?.category }))
     .filter((b) => !state.screenTime.importedAt || state.enabled[b.id]);
   return [...fromScreenTime, ...presets, ...state.custom.map((b) => ({ ...b, custom: true, source: 'custom' }))];
 }
@@ -86,6 +87,11 @@ function importScreenTime(raw) {
   const items = st.sanitizeItems(raw);
   if (!items.length) throw new UserError('Screen Time returned no apps.');
   const now = clock.now();
+  // A fresh read replaces the old one; apps you've turned on are kept even if they drop out.
+  for (const [name, it] of Object.entries(state.screenTime.items)) {
+    if (!state.enabled['st-' + st.slug(name)]) delete state.screenTime.items[name];
+    else it.lastSeen = now;
+  }
   for (const it of items) state.screenTime.items[it.name] = { ...it, lastSeen: now };
   state.screenTime.importedAt = now;
   // Carry toggles made before the first import over to the matching Screen Time app.
@@ -327,6 +333,7 @@ function status() {
     blocks: allBlocks().map((b) => ({
       id: b.id, name: b.name, custom: b.custom, bundleIds: b.bundleIds, domains: b.domains,
       source: b.source, seconds: b.seconds ?? null, hasLimit: !!b.hasLimit,
+      category: b.category || (b.custom ? 'Your own' : 'Other'), used: b.used !== false,
       enabled: !!state.enabled[b.id], locked: isLocked(b.id),
     })),
     neverLock: cfg.NEVER_LOCK,

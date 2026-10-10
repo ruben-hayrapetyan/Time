@@ -107,8 +107,8 @@ function renderDial() {
   }
 }
 
-const TOP = 15;
-let showAll = false;
+const PER_GROUP = 6;
+const openGroups = new Set();
 const inApp = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.time);
 
 function usage(sec) {
@@ -133,6 +133,46 @@ function ago(ms) {
   return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
 }
 
+function blockRow(b) {
+  const li = document.createElement('li');
+  li.className = 'block' + (b.locked ? ' is-locked' : '');
+
+  const text = document.createElement('div');
+  text.className = 'block-text';
+  const name = document.createElement('div');
+  name.className = 'block-name';
+  name.textContent = b.name;
+  if (b.locked) {
+    const tag = document.createElement('span');
+    tag.className = 'lock-tag';
+    tag.textContent = 'locked';
+    name.appendChild(tag);
+  }
+  const sub = document.createElement('div');
+  sub.className = 'block-what';
+  sub.textContent = [b.seconds ? usage(b.seconds) : null, coverage(b)].filter(Boolean).join(' · ');
+  text.append(name, sub);
+  if (b.custom && !b.enabled) {
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.textContent = 'Delete';
+    del.onclick = () => act(`/api/custom/${b.id}/delete`, {}, `Deleted ${b.name}.`);
+    text.appendChild(del);
+  }
+
+  const bolt = document.createElement('button');
+  bolt.className = 'bolt';
+  bolt.setAttribute('role', 'switch');
+  bolt.setAttribute('aria-checked', String(b.enabled));
+  bolt.setAttribute('aria-label', `Block ${b.name}`);
+  bolt.disabled = b.locked;
+  bolt.title = b.locked ? `Locked until ${when(S.lock.endsAt)}` : b.enabled ? `Unblock ${b.name}` : `Block ${b.name}`;
+  bolt.onclick = () => act(`/api/blocks/${b.id}`, { enabled: !b.enabled });
+
+  li.append(text, bolt);
+  return li;
+}
+
 function renderBlocks() {
   const imported = S.screenTime && S.screenTime.importedAt;
   $('stSource').textContent = imported
@@ -144,58 +184,63 @@ function renderBlocks() {
     : '';
 
   const q = $('filter').value.trim().toLowerCase();
-  let list = S.blocks.filter((b) => !q || b.name.toLowerCase().includes(q));
-  const extra = !q && !showAll ? list.filter((b, i) => i >= TOP && !b.enabled) : [];
-  if (extra.length) list = list.filter((b) => !extra.includes(b));
-  $('showAll').hidden = !!q || (!extra.length && !showAll) || S.blocks.length <= TOP;
-  $('showAll').textContent = showAll ? 'Show fewer' : `Show all ${S.blocks.length}`;
-
-  const ul = $('blockList');
-  ul.innerHTML = '';
-  if (!list.length) {
-    const li = document.createElement('li');
-    li.className = 'hint';
-    li.textContent = q ? `Nothing matches "${$('filter').value}".` : 'No apps yet.';
-    ul.appendChild(li);
+  const groups = new Map();
+  for (const b of S.blocks) {
+    if (q && !b.name.toLowerCase().includes(q)) continue;
+    if (!groups.has(b.category)) groups.set(b.category, []);
+    groups.get(b.category).push(b);
   }
-  for (const b of list) {
-    const li = document.createElement('li');
-    li.className = 'block' + (b.locked ? ' is-locked' : '');
+  const total = (list) => list.reduce((n, b) => n + (b.seconds || 0), 0);
+  const order = [...groups.entries()].sort((x, y) => total(y[1]) - total(x[1]) || x[0].localeCompare(y[0]));
 
-    const text = document.createElement('div');
-    text.className = 'block-text';
-    const name = document.createElement('div');
-    name.className = 'block-name';
-    name.textContent = b.name;
-    if (b.locked) {
-      const tag = document.createElement('span');
-      tag.className = 'lock-tag';
-      tag.textContent = 'locked';
-      name.appendChild(tag);
+  const root = $('groups');
+  root.innerHTML = '';
+  if (!order.length) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = q ? `Nothing matches "${$('filter').value}".` : 'No apps yet.';
+    root.appendChild(p);
+  }
+  for (const [cat, all] of order) {
+    all.sort((x, y) => (y.seconds || 0) - (x.seconds || 0) || x.name.localeCompare(y.name));
+    // Collapsed: the apps you actually used (top few) plus anything that's on.
+    const expanded = !!q || openGroups.has(cat);
+    let list = expanded ? all : all.filter((b, i) => b.enabled || (b.seconds > 0 && i < PER_GROUP));
+    if (!list.length) list = all.slice(0, Math.min(3, all.length));
+
+    const sec = document.createElement('section');
+    sec.className = 'group';
+    const head = document.createElement('div');
+    head.className = 'group-head';
+    const h = document.createElement('h3');
+    h.textContent = cat;
+    const meta = document.createElement('span');
+    meta.className = 'group-meta';
+    const t = total(all);
+    meta.textContent = [t ? `${usage(t)} this week` : null, `${all.length} app${all.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+    const on = all.filter((b) => b.enabled).length;
+    if (on) {
+      const span = document.createElement('span');
+      span.className = 'on';
+      span.textContent = ` · ${on} blocked`;
+      meta.appendChild(span);
     }
-    const sub = document.createElement('div');
-    sub.className = 'block-what';
-    sub.textContent = [b.seconds != null ? usage(b.seconds) : null, coverage(b)].filter(Boolean).join(' · ');
-    text.append(name, sub);
-    if (b.custom && !b.enabled) {
-      const del = document.createElement('button');
-      del.className = 'del';
-      del.textContent = 'Delete';
-      del.onclick = () => act(`/api/custom/${b.id}/delete`, {}, `Deleted ${b.name}.`);
-      text.appendChild(del);
+    head.append(h, meta);
+
+    const ul = document.createElement('ul');
+    ul.className = 'block-list';
+    for (const b of list) ul.appendChild(blockRow(b));
+    sec.append(head, ul);
+
+    const hidden = all.length - list.length;
+    if (!q && (hidden > 0 || openGroups.has(cat))) {
+      const more = document.createElement('button');
+      more.className = 'ghost more';
+      more.textContent = openGroups.has(cat) ? 'Show fewer' : `Show ${hidden} more`;
+      more.onclick = () => { openGroups.has(cat) ? openGroups.delete(cat) : openGroups.add(cat); renderBlocks(); };
+      sec.appendChild(more);
     }
-
-    const bolt = document.createElement('button');
-    bolt.className = 'bolt';
-    bolt.setAttribute('role', 'switch');
-    bolt.setAttribute('aria-checked', String(b.enabled));
-    bolt.setAttribute('aria-label', `Block ${b.name}`);
-    bolt.disabled = b.locked;
-    bolt.title = b.locked ? `Locked until ${when(S.lock.endsAt)}` : b.enabled ? `Unblock ${b.name}` : `Block ${b.name}`;
-    bolt.onclick = () => act(`/api/blocks/${b.id}`, { enabled: !b.enabled });
-
-    li.append(text, bolt);
-    ul.appendChild(li);
+    root.appendChild(sec);
   }
   $('neverLock').textContent = 'Never locked: Phone, Messages, FaceTime, and calendar apps. They are left out of this list on purpose.';
 }
@@ -212,7 +257,6 @@ window.screenTimeDone = (err, n) => {
 };
 $('stRefresh').onclick = () => window.webkit.messageHandlers.time.postMessage('refreshScreenTime');
 $('filter').addEventListener('input', () => renderBlocks());
-$('showAll').onclick = () => { showAll = !showAll; renderBlocks(); };
 
 function renderLock() {
   const lock = S.lock;
