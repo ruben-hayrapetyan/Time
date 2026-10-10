@@ -60,6 +60,14 @@ const PRESETS = [
   { id: 'steam', name: 'Steam', bundleIds: ['com.valvesoftware.steam'], domains: ['store.steampowered.com', 'steamcommunity.com', 'steampowered.com'] },
   { id: 'spotify', name: 'Spotify', bundleIds: ['com.spotify.client'], domains: ['open.spotify.com', 'spotify.com'] },
   { id: 'whatsapp', name: 'WhatsApp', bundleIds: ['net.whatsapp.WhatsApp'], domains: ['web.whatsapp.com', 'whatsapp.com'] },
+  { id: 'snapchat', name: 'Snapchat', bundleIds: [], domains: ['snapchat.com', 'web.snapchat.com', 'sc-cdn.net', 'snapkit.com'] },
+  { id: 'linkedin', name: 'LinkedIn', bundleIds: [], domains: ['linkedin.com', 'licdn.com'] },
+  { id: 'chess', name: 'Chess.com', bundleIds: [], domains: ['chess.com'] },
+  { id: 'groupme', name: 'GroupMe', bundleIds: [], domains: ['groupme.com', 'web.groupme.com'] },
+  { id: 'messenger', name: 'Messenger', bundleIds: [], domains: ['messenger.com'] },
+  { id: 'pinterest', name: 'Pinterest', bundleIds: [], domains: ['pinterest.com', 'pinimg.com'] },
+  { id: 'twitch', name: 'Twitch', bundleIds: [], domains: ['twitch.tv', 'ttvnw.net'] },
+  { id: 'amazon', name: 'Amazon Shopping', bundleIds: [], domains: ['amazon.com', 'smile.amazon.com'] },
   { id: 'slack', name: 'Slack', bundleIds: ['com.tinyspeck.slackmacgap'], domains: ['app.slack.com'] },
 ];
 

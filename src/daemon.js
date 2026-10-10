@@ -13,6 +13,7 @@ const { enforceApps, installedApps, isLockable } = require('./enforce-apps');
 const { enforceWeb, expand, normalizeDomain, isValidDomain, isProtectedDomain } = require('./enforce-web');
 const hard = require('./hardmode');
 const words = require('./words');
+const st = require('./screentime');
 const watchdog = require('./watchdog');
 
 const MIN = 60 * 1000;
@@ -25,7 +26,7 @@ function log(msg) {
 // ---------- state ----------
 
 function defaultState() {
-  return { version: 1, enabled: {}, custom: [], lock: null, hard: null, lastTrusted: 0 };
+  return { version: 1, enabled: {}, custom: [], lock: null, hard: null, lastTrusted: 0, screenTime: { importedAt: 0, items: {} } };
 }
 
 function loadState() {
@@ -57,7 +58,48 @@ function installInfo() {
 
 // ---------- blocks & lock ----------
 
-const allBlocks = () => [...cfg.PRESETS.map((b) => ({ ...b, custom: false })), ...state.custom.map((b) => ({ ...b, custom: true }))];
+// Mac apps installed right now, for matching Screen Time names to Mac apps.
+let installedCache = [];
+async function refreshInstalled() {
+  try { installedCache = await installedApps(); } catch (e) { log(`app scan failed: ${e.message}`); }
+}
+
+// Once Screen Time has been imported, its list is the block list. Before that (or if the
+// page is opened in a browser without Time.app), the built-in presets stand in.
+function screenTimeBlocks() {
+  const { importedAt, items } = state.screenTime;
+  return Object.values(items)
+    .filter((it) => !st.isNeverLock(it.name) && !st.isSystem(it.name))
+    .filter((it) => it.lastSeen === importedAt || state.enabled['st-' + st.slug(it.name)])
+    .map((it) => st.toBlock(it, installedCache))
+    .sort((a, b) => b.seconds - a.seconds);
+}
+
+function allBlocks() {
+  const fromScreenTime = state.screenTime.importedAt ? screenTimeBlocks() : [];
+  const presets = cfg.PRESETS.map((b) => ({ ...b, custom: false, source: 'preset' }))
+    .filter((b) => !state.screenTime.importedAt || state.enabled[b.id]);
+  return [...fromScreenTime, ...presets, ...state.custom.map((b) => ({ ...b, custom: true, source: 'custom' }))];
+}
+
+function importScreenTime(raw) {
+  const items = st.sanitizeItems(raw);
+  if (!items.length) throw new UserError('Screen Time returned no apps.');
+  const now = clock.now();
+  for (const it of items) state.screenTime.items[it.name] = { ...it, lastSeen: now };
+  state.screenTime.importedAt = now;
+  // Carry toggles made before the first import over to the matching Screen Time app.
+  for (const preset of cfg.PRESETS) {
+    if (!state.enabled[preset.id]) continue;
+    const match = screenTimeBlocks().find((b) => b.shortName.toLowerCase() === preset.name.toLowerCase() || b.shortName.toLowerCase() === preset.id);
+    if (!match) continue;
+    state.enabled[match.id] = true;
+    if (lockActive() && state.lock.lockedIds.includes(preset.id) && !state.lock.lockedIds.includes(match.id)) state.lock.lockedIds.push(match.id);
+    if (!isLocked(preset.id)) state.enabled[preset.id] = false;
+  }
+  save();
+  log(`imported ${items.length} apps from Screen Time`);
+}
 const findBlock = (id) => allBlocks().find((b) => b.id === id);
 const lockActive = () => !!state.lock && clock.now() < state.lock.endsAt;
 const isLocked = (id) => lockActive() && state.lock.lockedIds.includes(id);
@@ -281,8 +323,10 @@ function status() {
       emergency: state.lock.emergency && { challenge: state.lock.emergency.challenge, issuedAt: state.lock.emergency.issuedAt, unlockAt: state.lock.emergency.unlockAt },
     },
     hardActive: !!state.hard?.active,
+    screenTime: { importedAt: state.screenTime.importedAt, count: Object.keys(state.screenTime.items).length },
     blocks: allBlocks().map((b) => ({
       id: b.id, name: b.name, custom: b.custom, bundleIds: b.bundleIds, domains: b.domains,
+      source: b.source, seconds: b.seconds ?? null, hasLimit: !!b.hasLimit,
       enabled: !!state.enabled[b.id], locked: isLocked(b.id),
     })),
     neverLock: cfg.NEVER_LOCK,
@@ -345,6 +389,7 @@ async function handle(req, res) {
   let m;
   if ((m = p.match(/^\/api\/blocks\/([\w-]+)$/))) setEnabled(m[1], body.enabled);
   else if (p === '/api/custom') addCustom(body);
+  else if (p === '/api/screentime/import') importScreenTime(body.items);
   else if ((m = p.match(/^\/api\/custom\/([\w-]+)\/delete$/))) removeCustom(m[1]);
   else if (p === '/api/lock') await startLock(body);
   else if (p === '/api/lock/extend') await extendLock(body.minutes);
@@ -370,6 +415,8 @@ function main() {
   server.listen(cfg.PORT, '127.0.0.1', () => log(`control page on http://localhost:${cfg.PORT}`));
 
   clock.sync().finally(() => save());
+  refreshInstalled();
+  setInterval(refreshInstalled, 10 * 60 * 1000);
   setInterval(() => clock.sync(), 60 * 1000);
   setInterval(() => tick().catch((e) => log(`tick error: ${e.message}`)), 1000);
   setInterval(save, 15 * 1000);

@@ -14,7 +14,7 @@ mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources/payload"
 echo "==> Compiling"
 swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos13.0" \
   -framework AppKit -framework WebKit \
-  -o "$OUT/Contents/MacOS/Time" "$REPO/app/main.swift"
+  -o "$OUT/Contents/MacOS/Time" "$REPO/app/main.swift" "$REPO/app/axkit.swift" "$REPO/app/screentime.swift"
 
 echo "==> Icon"
 ICONSET="$REPO/build/AppIcon.iconset"
@@ -55,8 +55,11 @@ cat > "$OUT/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-echo "==> Signing (ad hoc)"
-codesign --force --deep --sign - "$OUT" >/dev/null 2>&1
+# A stable local certificate keeps macOS permissions (Accessibility) across rebuilds.
+IDENTITY="Time Local Signing"
+security find-identity -p codesigning | grep -q "\"$IDENTITY\"" || IDENTITY="-"
+echo "==> Signing ($IDENTITY)"
+codesign --force --deep --sign "$IDENTITY" "$OUT" >/dev/null 2>&1
 codesign --verify --deep "$OUT"
 
 if [ "${1:-}" != "--no-install" ]; then

@@ -65,10 +65,16 @@
 
     <section class="blocks" aria-labelledby="blocksTitle">
       <div class="section-head">
-        <h2 id="blocksTitle">Blocks</h2>
-        <p class="hint">Turning one on closes that app on this Mac and blocks its websites in every browser.</p>
+        <h2 id="blocksTitle">Your apps</h2>
+        <p class="hint" id="stSource"></p>
+        <div class="row-actions">
+          <button class="ghost" id="stRefresh" hidden>Refresh from Screen Time</button>
+          <input class="filter" id="filter" type="search" placeholder="Find an app" aria-label="Find an app">
+        </div>
+        <p class="hint" id="stNote"></p>
       </div>
       <ul class="block-list" id="blockList"></ul>
+      <button class="ghost more" id="showAll" hidden></button>
       <p class="never" id="neverLock"></p>
     </section>
 

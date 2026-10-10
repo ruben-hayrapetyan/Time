@@ -107,16 +107,60 @@ function renderDial() {
   }
 }
 
+const TOP = 15;
+let showAll = false;
+const inApp = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.time);
+
+function usage(sec) {
+  if (sec == null) return '';
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  if (h) return `${h} h${m ? ` ${m} min` : ''}`;
+  return m ? `${m} min` : '< 1 min';
+}
+
+function coverage(b) {
+  const parts = [];
+  if (b.bundleIds.length) parts.push('Mac app');
+  if (b.domains.length) parts.push(b.domains.length === 1 ? b.domains[0] : `${b.domains[0]} +${b.domains.length - 1}`);
+  return parts.length ? parts.join(' · ') : 'not on this Mac';
+}
+
+function ago(ms) {
+  const min = Math.round((serverNow() - ms) / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+}
+
 function renderBlocks() {
-  const list = $('blockList');
-  list.innerHTML = '';
-  for (const b of S.blocks) {
+  const imported = S.screenTime && S.screenTime.importedAt;
+  $('stSource').textContent = imported
+    ? `From your Screen Time, all devices, this week. Updated ${ago(S.screenTime.importedAt)}.`
+    : inApp ? 'Reading your Screen Time list…' : 'Open the Time app to load your apps from Screen Time. Showing common apps until then.';
+  $('stRefresh').hidden = !inApp;
+  $('stNote').textContent = imported
+    ? 'Toggles close Mac apps and block websites on this Mac. Locking apps on your iPhone and iPad through Screen Time is the next step and is not connected yet.'
+    : '';
+
+  const q = $('filter').value.trim().toLowerCase();
+  let list = S.blocks.filter((b) => !q || b.name.toLowerCase().includes(q));
+  const extra = !q && !showAll ? list.filter((b, i) => i >= TOP && !b.enabled) : [];
+  if (extra.length) list = list.filter((b) => !extra.includes(b));
+  $('showAll').hidden = !!q || (!extra.length && !showAll) || S.blocks.length <= TOP;
+  $('showAll').textContent = showAll ? 'Show fewer' : `Show all ${S.blocks.length}`;
+
+  const ul = $('blockList');
+  ul.innerHTML = '';
+  if (!list.length) {
+    const li = document.createElement('li');
+    li.className = 'hint';
+    li.textContent = q ? `Nothing matches "${$('filter').value}".` : 'No apps yet.';
+    ul.appendChild(li);
+  }
+  for (const b of list) {
     const li = document.createElement('li');
     li.className = 'block' + (b.locked ? ' is-locked' : '');
-    const what = [
-      b.bundleIds.length ? 'Mac app' : null,
-      b.domains.length ? b.domains.slice(0, 3).join(', ') + (b.domains.length > 3 ? '…' : '') : null,
-    ].filter(Boolean).join(' · ');
 
     const text = document.createElement('div');
     text.className = 'block-text';
@@ -131,7 +175,7 @@ function renderBlocks() {
     }
     const sub = document.createElement('div');
     sub.className = 'block-what';
-    sub.textContent = what;
+    sub.textContent = [b.seconds != null ? usage(b.seconds) : null, coverage(b)].filter(Boolean).join(' · ');
     text.append(name, sub);
     if (b.custom && !b.enabled) {
       const del = document.createElement('button');
@@ -151,10 +195,24 @@ function renderBlocks() {
     bolt.onclick = () => act(`/api/blocks/${b.id}`, { enabled: !b.enabled });
 
     li.append(text, bolt);
-    list.appendChild(li);
+    ul.appendChild(li);
   }
-  $('neverLock').textContent = `Never locked: ${S.neverLock.map((a) => a.name).join(', ')}.`;
+  $('neverLock').textContent = 'Never locked: Phone, Messages, FaceTime, and calendar apps. They are left out of this list on purpose.';
 }
+
+// Called by Time.app around a Screen Time read.
+window.screenTimeBusy = (busy) => {
+  $('stRefresh').disabled = busy;
+  $('stRefresh').textContent = busy ? 'Reading Screen Time…' : 'Refresh from Screen Time';
+};
+window.screenTimeDone = (err, n) => {
+  window.screenTimeBusy(false);
+  if (err) toast(err); else toast(`Loaded ${n} apps from Screen Time.`, true);
+  refresh();
+};
+$('stRefresh').onclick = () => window.webkit.messageHandlers.time.postMessage('refreshScreenTime');
+$('filter').addEventListener('input', () => renderBlocks());
+$('showAll').onclick = () => { showAll = !showAll; renderBlocks(); };
 
 function renderLock() {
   const lock = S.lock;
@@ -199,8 +257,14 @@ function lockLabel() {
   return h && mm ? `${h} h ${mm} min` : h ? `${h} h` : `${mm} min`;
 }
 
+let autoImportTried = false;
 function apply(status) {
   S = status;
+  // First open inside Time.app: fill the list from Screen Time automatically.
+  if (inApp && !autoImportTried && S.screenTime && !S.screenTime.importedAt) {
+    autoImportTried = true;
+    window.webkit.messageHandlers.time.postMessage('refreshScreenTime');
+  }
   offset = S.now - Date.now();
   renderBlocks();
   renderLock();

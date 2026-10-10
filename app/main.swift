@@ -133,8 +133,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // MARK: installer
 
     func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
-        if message.name == "time", let cmd = message.body as? String, cmd == "install" { runInstaller() }
+        guard message.name == "time", let cmd = message.body as? String else { return }
+        if cmd == "install" { runInstaller() }
+        if cmd == "refreshScreenTime" { refreshScreenTime() }
     }
+
+    var readingScreenTime = false
+
+    /// Reads the Screen Time list in System Settings and hands it to the service.
+    func refreshScreenTime() {
+        guard !readingScreenTime else { return }
+        readingScreenTime = true
+        web.evaluateJavaScript("window.screenTimeBusy && screenTimeBusy(true)")
+        DispatchQueue.global(qos: .userInitiated).async {
+            var result: Result<[ScreenTimeItem], Error>
+            do { result = .success(try ScreenTimeReader().readActivity()) } catch { result = .failure(error) }
+            DispatchQueue.main.async {
+                // Put System Settings away and come back to Time.
+                NSRunningApplication.runningApplications(withBundleIdentifier: settingsBundleID).first?.hide()
+                self.showWindow()
+                switch result {
+                case .success(let items):
+                    postScreenTimeItems(items) { err in
+                        self.readingScreenTime = false
+                        self.web.evaluateJavaScript("window.screenTimeDone && screenTimeDone(\(err.map(self.jsString) ?? "null"), \(items.count))")
+                    }
+                case .failure(let error):
+                    self.readingScreenTime = false
+                    self.web.evaluateJavaScript("window.screenTimeDone && screenTimeDone(\(self.jsString(error.localizedDescription)), 0)")
+                }
+            }
+        }
+    }
+
 
     func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
@@ -313,6 +344,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     @objc func reload() { route() }
+}
+
+if let i = CommandLine.arguments.firstIndex(of: "--ax") {
+    runAXSteps(Array(CommandLine.arguments[(i + 1)...]))
+    exit(0)
 }
 
 let app = NSApplication.shared
