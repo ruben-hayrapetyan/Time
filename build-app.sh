@@ -5,6 +5,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")" && pwd)"
 OUT="$REPO/build/Time.app"
 VERSION="$(node -p "require('$REPO/package.json').version")"
+# Unique per build, so the app can tell when the installed service is older than itself.
+BUILD="$(date +%Y%m%d%H%M%S)"
 
 [ -d "$REPO/node_modules/tlock-js" ] || (cd "$REPO" && npm install --omit=dev)
 
@@ -31,6 +33,12 @@ cp "$REPO/app/setup.html" "$OUT/Contents/Resources/"
 cp -R "$REPO/src" "$REPO/ui" "$REPO/node_modules" "$REPO/package.json" "$REPO/install.sh" "$REPO/uninstall.sh" \
   "$OUT/Contents/Resources/payload/"
 
+node -e '
+  const f = process.argv[1], p = require(f);
+  p.build = process.argv[2];
+  require("fs").writeFileSync(f, JSON.stringify(p, null, 2) + "\n");
+' "$OUT/Contents/Resources/payload/package.json" "$BUILD"
+
 cat > "$OUT/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -44,6 +52,7 @@ cat > "$OUT/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>TimeBuild</key><string>$BUILD</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key><true/>

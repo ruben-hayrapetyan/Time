@@ -17,7 +17,8 @@ const st = require('./screentime');
 const watchdog = require('./watchdog');
 
 const MIN = 60 * 1000;
-const VERSION = require('../package.json').version;
+const PKG = require('../package.json');
+const VERSION = PKG.build ? `${PKG.version}+${PKG.build}` : PKG.version;
 
 function log(msg) {
   console.log(`${new Date().toISOString()} ${msg}`);
@@ -329,7 +330,12 @@ function status() {
       emergency: state.lock.emergency && { challenge: state.lock.emergency.challenge, issuedAt: state.lock.emergency.issuedAt, unlockAt: state.lock.emergency.unlockAt },
     },
     hardActive: !!state.hard?.active,
-    screenTime: { importedAt: state.screenTime.importedAt, count: Object.keys(state.screenTime.items).length },
+    screenTime: {
+      importedAt: state.screenTime.importedAt,
+      count: Object.keys(state.screenTime.items).length,
+      // Lists read by older versions have no categories; read again to get them.
+      needsRefresh: !state.screenTime.importedAt || Object.values(state.screenTime.items).some((it) => !('category' in it)),
+    },
     blocks: allBlocks().map((b) => ({
       id: b.id, name: b.name, custom: b.custom, bundleIds: b.bundleIds, domains: b.domains,
       source: b.source, seconds: b.seconds ?? null, hasLimit: !!b.hasLimit,

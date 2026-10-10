@@ -305,7 +305,7 @@ let autoImportTried = false;
 function apply(status) {
   S = status;
   // First open inside Time.app: fill the list from Screen Time automatically.
-  if (inApp && !autoImportTried && S.screenTime && !S.screenTime.importedAt) {
+  if (inApp && !autoImportTried && S.screenTime && S.screenTime.needsRefresh) {
     autoImportTried = true;
     window.webkit.messageHandlers.time.postMessage('refreshScreenTime');
   }

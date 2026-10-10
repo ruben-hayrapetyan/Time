@@ -47,7 +47,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var showingSetup = false
     var installing = false
 
-    var bundleVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0" }
+    var bundleVersion: String {
+        let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        let b = Bundle.main.object(forInfoDictionaryKey: "TimeBuild") as? String
+        return b.map { "\(v)+\($0)" } ?? v
+    }
+    var displayVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0" }
     var payloadDir: URL { Bundle.main.resourceURL!.appendingPathComponent("payload") }
 
     func applicationDidFinishLaunching(_ note: Notification) {
@@ -126,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         showingSetup = true
         let url = Bundle.main.url(forResource: "setup", withExtension: "html")!
         var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        comps.queryItems = [URLQueryItem(name: "mode", value: mode), URLQueryItem(name: "v", value: bundleVersion)]
+        comps.queryItems = [URLQueryItem(name: "mode", value: mode), URLQueryItem(name: "v", value: displayVersion)]
         web.loadFileURL(comps.url!, allowingReadAccessTo: url.deletingLastPathComponent())
     }
 
