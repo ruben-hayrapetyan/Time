@@ -22,7 +22,7 @@ enum ScreenTimeError: LocalizedError {
 }
 
 final class ScreenTimeReader {
-    let ui = SettingsUI()
+    let ui: SettingsUI = { let u = SettingsUI(); u.background = true; return u }()
 
     private func popup(where match: @escaping ([String]) -> Bool) -> AXUIElement? {
         guard let w = ui.window else { return nil }
@@ -143,6 +143,7 @@ final class ScreenTimeReader {
 
     /// Activity (with usage) plus categories, merged into one list.
     func readAll() throws -> [ScreenTimeItem] {
+        defer { ui.finish() }
         var items = try readActivity()
         let cats = (try? readCategories()) ?? []
         var categoryOf: [String: String] = [:]

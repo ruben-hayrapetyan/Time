@@ -99,20 +99,59 @@ enum AX {
 /// The System Settings app as an accessibility element, launching it if needed.
 final class SettingsUI {
     var app: AXUIElement?
+    /// Work out of sight: open System Settings without taking focus and keep its window minimized.
+    var background = false
+    private(set) var wasRunning = false
+    private var previous: NSRunningApplication?
+    private var openedOnce = false
+    private var originalPosition: CGPoint?
 
     func open(_ url: URL = screenTimeURL) {
+        if !openedOnce {
+            openedOnce = true
+            wasRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: settingsBundleID).isEmpty
+        }
+        // System Settings only draws its pages while active, so it has to come forward briefly.
+        if previous == nil { previous = NSWorkspace.shared.frontmostApplication }
         NSWorkspace.shared.open(url)
-        for _ in 0..<40 {
+        for _ in 0..<200 {
             if let running = NSRunningApplication.runningApplications(withBundleIdentifier: settingsBundleID).first {
                 app = AXUIElementCreateApplication(running.processIdentifier)
-                if window != nil { return }
+                if let w = window {
+                    // Let the page draw its contents first; a window minimized before that stays blank.
+                    if background, waitFor(8, { ["App & Website Activity", "App Limits", "Add Limit…"].contains(AX.label($0)) || AX.str($0, kAXIdentifierAttribute as String) == "mostUsedTable" }) != nil {
+                        Thread.sleep(forTimeInterval: 0.3)
+                        // Slide the window off the bottom-right edge (minimizing would unload the page).
+                        if originalPosition == nil, let v = AX.attr(w, kAXPositionAttribute) {
+                            var p = CGPoint.zero
+                            if AXValueGetValue(v as! AXValue, .cgPoint, &p) { originalPosition = p }
+                        }
+                        let frame = NSScreen.screens.map(\.frame).reduce(NSRect.zero) { $0.union($1) }
+                        var pos = CGPoint(x: frame.maxX - 2, y: frame.maxY - 2)
+                        if let v = AXValueCreate(.cgPoint, &pos) { AXUIElementSetAttributeValue(w, kAXPositionAttribute as CFString, v) }
+                    }
+                    return
+                }
             }
-            Thread.sleep(forTimeInterval: 0.25)
+            Thread.sleep(forTimeInterval: 0.05)
         }
+    }
+
+    /// Puts things back: quits System Settings if we were the ones who opened it.
+    func finish() {
+        guard background, let running = NSRunningApplication.runningApplications(withBundleIdentifier: settingsBundleID).first else { return }
+        if !wasRunning {
+            running.terminate()
+        } else if let w = window, var p = originalPosition, let v = AXValueCreate(.cgPoint, &p) {
+            AXUIElementSetAttributeValue(w, kAXPositionAttribute as CFString, v)
+        }
+        // Settings has to stay the active app while it's being read; hand focus back now.
+        if let previous, previous.bundleIdentifier != settingsBundleID { previous.activate() }
     }
 
     var window: AXUIElement? {
         guard let app else { return nil }
+        // A minimized window is never the focused one, so look through all of them.
         if let w = AX.attr(app, kAXFocusedWindowAttribute) { return (w as! AXUIElement) }
         return (AX.attr(app, kAXWindowsAttribute) as? [AXUIElement])?.first
     }
@@ -141,8 +180,9 @@ func runAXSteps(_ steps: [String]) {
         return
     }
     let ui = SettingsUI()
+    ui.background = steps.first == "bg"
     ui.open()
-    for step in steps {
+    for step in steps where step != "bg" {
         let (cmd, arg) = step.split(separator: ":", maxSplits: 1).map(String.init).splitPair()
         switch cmd {
         case "url":
@@ -216,6 +256,17 @@ func runAXSteps(_ steps: [String]) {
                     }
                 }
                 out.append("# expand \(arg): \(n) opened")
+            }
+        case "minimize":
+            if let w = ui.window {
+                let ok = AXUIElementSetAttributeValue(w, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success
+                out.append("# minimize: \(ok ? "ok" : "failed")")
+                Thread.sleep(forTimeInterval: 1)
+            }
+        case "alldump":
+            for w in (ui.app.flatMap { AX.attr($0, kAXWindowsAttribute) as? [AXUIElement] } ?? []) {
+                out.append("## window \(AX.str(w, kAXTitleAttribute)) minimized=\(AX.str(w, kAXMinimizedAttribute)) focused=\(AX.str(w, kAXFocusedAttribute))")
+                out.append(AX.dump(w, maxDepth: Int(arg) ?? 40))
             }
         case "wait":
             Thread.sleep(forTimeInterval: Double(arg) ?? 1)

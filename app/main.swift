@@ -154,9 +154,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             var result: Result<[ScreenTimeItem], Error>
             do { result = .success(try ScreenTimeReader().readAll()) } catch { result = .failure(error) }
             DispatchQueue.main.async {
-                // Put System Settings away and come back to Time.
-                NSRunningApplication.runningApplications(withBundleIdentifier: settingsBundleID).first?.hide()
-                self.showWindow()
                 switch result {
                 case .success(let items):
                     postScreenTimeItems(items) { err in
