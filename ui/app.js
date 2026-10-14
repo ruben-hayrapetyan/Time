@@ -180,7 +180,7 @@ function renderBlocks() {
     : inApp ? 'Reading your Screen Time list…' : 'Open the Time app to load your apps from Screen Time. Showing common apps until then.';
   $('stRefresh').hidden = !inApp;
   $('stNote').textContent = imported
-    ? 'Toggles close Mac apps and block websites on this Mac. Locking apps on your iPhone and iPad through Screen Time is the next step and is not connected yet.'
+    ? phoneNote || 'Toggles close Mac apps and block websites on this Mac. Locking an app also blocks it on your iPhone and iPad: Time turns on a Screen Time passcode nobody knows until the lock ends and gives the app a 1-minute daily limit that blocks when it runs out, with no Ignore Limit. Both are removed when the lock ends.'
     : '';
 
   const q = $('filter').value.trim().toLowerCase();
@@ -255,6 +255,17 @@ window.screenTimeDone = (err, n) => {
   if (err) toast(err); else toast(`Loaded ${n} apps from Screen Time.`, true);
   refresh();
 };
+// Called by Time.app while it adds or removes Screen Time limits for locked apps.
+let phoneNote = '';
+window.phoneSyncBusy = () => {
+  phoneNote = 'Setting up Screen Time on your iPhone and iPad. System Settings comes up for about 30 seconds; please don’t touch the mouse or keyboard until it closes.';
+  if (S) renderBlocks();
+};
+window.phoneSyncDone = (err, ok) => {
+  phoneNote = '';
+  if (err) toast(err); else if (ok) toast(ok, true);
+  if (S) renderBlocks();
+};
 $('stRefresh').onclick = () => window.webkit.messageHandlers.time.postMessage('refreshScreenTime');
 $('filter').addEventListener('input', () => renderBlocks());
 
@@ -268,7 +279,8 @@ function renderLock() {
     $('lockedTitle').textContent = lock.hard ? 'Locked in hard mode' : 'Locked';
     $('lockedHint').textContent = `Until ${when(lock.endsAt)}. You can turn more blocks on, but nothing that's on can be turned off.`
       + (lock.keepAfter ? ' They stay on after the timer ends.' : ' They turn off when the timer ends.')
-      + (lock.hard ? ' Your account is not an admin until then.' : '');
+      + (lock.hard ? ' Your account is not an admin until then.' : '')
+      + (S.screenTime && S.screenTime.passcodeHeld ? ' Screen Time is passcode-locked until then; apps you turn on now stay blocked on this Mac only.' : '');
     const em = lock.emergency;
     $('emIdle').hidden = !!em;
     $('emTyping').hidden = !(em && em.challenge);

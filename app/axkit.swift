@@ -47,8 +47,29 @@ enum AX {
         return AXUIElementSetAttributeValue(el, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success
     }
 
+    static func settable(_ el: AXUIElement, _ name: String = kAXValueAttribute) -> Bool {
+        var ok = DarwinBoolean(false)
+        return AXUIElementIsAttributeSettable(el, name as CFString, &ok) == .success && ok.boolValue
+    }
+
     static func setValue(_ el: AXUIElement, _ value: String) -> Bool {
         AXUIElementSetAttributeValue(el, kAXValueAttribute as CFString, value as CFString) == .success
+    }
+
+    /// The element's middle, in screen coordinates (top-left origin, like CGEvent).
+    static func center(_ el: AXUIElement) -> CGPoint? {
+        guard let pv = attr(el, kAXPositionAttribute), let sv = attr(el, kAXSizeAttribute) else { return nil }
+        var p = CGPoint.zero, s = CGSize.zero
+        guard AXValueGetValue(pv as! AXValue, .cgPoint, &p), AXValueGetValue(sv as! AXValue, .cgSize, &s) else { return nil }
+        return CGPoint(x: p.x + s.width / 2, y: p.y + s.height / 2)
+    }
+
+    /// The process with keyboard focus, asked of Accessibility directly (NSWorkspace's
+    /// frontmostApplication only updates while a run loop is turning).
+    static func focusedPID() -> pid_t? {
+        guard let app = attr(AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute) else { return nil }
+        var pid: pid_t = 0
+        return AXUIElementGetPid(app as! AXUIElement, &pid) == .success ? pid : nil
     }
 
     static func walk(_ el: AXUIElement, depth: Int = 0, maxDepth: Int = 40, _ visit: (AXUIElement, Int) -> Bool) {
@@ -96,6 +117,44 @@ enum AX {
     }
 }
 
+/// The real mouse pointer. A few Screen Time controls only answer to it: the minutes field
+/// takes a click, and a limit's Edit… button only exists while the pointer is over its row.
+enum Pointer {
+    static var location: CGPoint { CGEvent(source: nil)?.location ?? .zero }
+
+    static func hover(_ pt: CGPoint) {
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: pt, mouseButton: .left)?.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.6)
+    }
+
+    static func click(_ pt: CGPoint) {
+        hover(pt)
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+            CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: pt, mouseButton: .left)?.post(tap: .cghidEventTap)
+        }
+        Thread.sleep(forTimeInterval: 0.6)
+    }
+
+    static func warp(_ pt: CGPoint) { CGWarpMouseCursorPosition(pt) }
+}
+
+/// Key presses, for the Screen Time passcode boxes (they ignore values set through Accessibility).
+/// They go to whichever app is in front, so callers check that first.
+enum Keyboard {
+    static let digitCodes: [Character: CGKeyCode] = ["0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25]
+
+    static func type(_ digits: String) {
+        for d in digits {
+            guard let code = digitCodes[d] else { continue }
+            for down in [true, false] {
+                CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.post(tap: .cghidEventTap)
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            Thread.sleep(forTimeInterval: 0.35)
+        }
+    }
+}
+
 /// The System Settings app as an accessibility element, launching it if needed.
 final class SettingsUI {
     var app: AXUIElement?
@@ -103,6 +162,7 @@ final class SettingsUI {
     var background = false
     private(set) var wasRunning = false
     private var previous: NSRunningApplication?
+    var previousApp: NSRunningApplication? { previous }
     private var openedOnce = false
     private var originalPosition: CGPoint?
 
@@ -137,12 +197,63 @@ final class SettingsUI {
         }
     }
 
+    /// Runs `body` with the window back where the user had it (pointer events need it on screen),
+    /// then slides it away again and puts the pointer back where it was.
+    func onScreen<T>(_ body: () throws -> T) rethrows -> T {
+        let pointer = Pointer.location
+        let hidden = background ? window.flatMap { AX.attr($0, kAXPositionAttribute) } : nil
+        if hidden != nil, let w = window, var p = visiblePosition(), let v = AXValueCreate(.cgPoint, &p) {
+            AXUIElementSetAttributeValue(w, kAXPositionAttribute as CFString, v)
+        }
+        bringToFront()
+        defer {
+            Pointer.warp(pointer)
+            if let hidden, let w = window { AXUIElementSetAttributeValue(w, kAXPositionAttribute as CFString, hidden) }
+        }
+        return try body()
+    }
+
+    /// Where the window was before Time moved it, or the middle of the main screen if that
+    /// spot isn't on any screen (System Settings was already parked off-screen, say after a crash).
+    func visiblePosition() -> CGPoint? {
+        guard let main = NSScreen.screens.first else { return originalPosition }
+        // Accessibility positions are top-left based, measured from the top of the main screen.
+        let size: CGSize = window.flatMap { AX.attr($0, kAXSizeAttribute) }.map { v in
+            var s = CGSize.zero; AXValueGetValue(v as! AXValue, .cgSize, &s); return s
+        } ?? CGSize(width: 700, height: 600)
+        if let p = originalPosition {
+            let corner = NSPoint(x: p.x + 60, y: main.frame.maxY - p.y - 60)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.contains(corner) }) { return p }
+        }
+        let vf = main.visibleFrame
+        return CGPoint(x: vf.midX - size.width / 2, y: max(main.frame.maxY - vf.maxY, main.frame.maxY - vf.midY - size.height / 2))
+    }
+
+    /// Brings System Settings to the front, on its current page, the way clicking its Dock icon does.
+    /// (A plain activate() from a background app is ignored on recent macOS.)
+    var isFrontmost: Bool {
+        AX.focusedPID() == NSRunningApplication.runningApplications(withBundleIdentifier: settingsBundleID).first?.processIdentifier
+    }
+
+    func bringToFront() {
+        guard !isFrontmost, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: settingsBundleID) else { return }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config)
+        for _ in 0..<50 where !isFrontmost {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+    }
+
     /// Puts things back: quits System Settings if we were the ones who opened it.
     func finish() {
         guard background, let running = NSRunningApplication.runningApplications(withBundleIdentifier: settingsBundleID).first else { return }
         if !wasRunning {
             running.terminate()
-        } else if let w = window, var p = originalPosition, let v = AXValueCreate(.cgPoint, &p) {
+            // Wait for it to be gone, so the next job doesn't latch onto a window that's closing.
+            for _ in 0..<50 where !running.isTerminated { Thread.sleep(forTimeInterval: 0.1) }
+        } else if let w = window, var p = visiblePosition(), let v = AXValueCreate(.cgPoint, &p) {
             AXUIElementSetAttributeValue(w, kAXPositionAttribute as CFString, v)
         }
         // Settings has to stay the active app while it's being read; hand focus back now.
@@ -268,6 +379,87 @@ func runAXSteps(_ steps: [String]) {
                 out.append("## window \(AX.str(w, kAXTitleAttribute)) minimized=\(AX.str(w, kAXMinimizedAttribute)) focused=\(AX.str(w, kAXFocusedAttribute))")
                 out.append(AX.dump(w, maxDepth: Int(arg) ?? 40))
             }
+        case "toggle":
+            // Presses the switch that shares a group with the text `arg`.
+            if let w = ui.window,
+               let group = AX.find(in: w, { el in AX.children(el).contains { AX.label($0) == arg } && AX.children(el).contains { AX.role($0) == "AXCheckBox" } }),
+               let sw = AX.children(group).first(where: { AX.role($0) == "AXCheckBox" }) {
+                out.append("# toggle \(arg) (was \(AX.str(sw, kAXValueAttribute as String))): \(AX.press(sw) ? "ok" : "failed")")
+                Thread.sleep(forTimeInterval: 1.5)
+            } else {
+                out.append("# toggle \(arg): NOT FOUND")
+            }
+        case "check":
+            // Presses the checkbox on the Add Limit row named `arg`.
+            if let w = ui.window, let cb = AX.find(in: w, { el in AX.role(el) == "AXCheckBox" && AX.children(AX.attr(el, kAXParentAttribute) as! AXUIElement).contains { AX.label($0) == arg } }) {
+                out.append("# check \(arg): \(AX.press(cb) ? "ok" : "failed")")
+                Thread.sleep(forTimeInterval: 0.8)
+            } else { out.append("# check \(arg): NOT FOUND") }
+        case "incr":
+            if let w = ui.window, let inc = AX.find(in: w, { AX.role($0) == "AXIncrementor" }) {
+                for _ in 0..<(Int(arg) ?? 1) { AXUIElementPerformAction(inc, kAXIncrementAction as CFString); Thread.sleep(forTimeInterval: 0.3) }
+                out.append("# incr: now \(AX.str(inc, kAXValueAttribute))")
+            } else { out.append("# incr: NOT FOUND") }
+        case "hover", "click":
+            // Moves the real pointer onto the element labelled `arg` ("<label>#<n>" for the n-th match); "click" also clicks.
+            let parts = arg.components(separatedBy: "#")
+            let n = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            let matches = ui.window.map { w in AX.findAll(in: w, { AX.label($0) == parts[0] }) } ?? []
+            if n < matches.count, let pt = AX.center(matches[n]) {
+                cmd == "click" ? Pointer.click(pt) : Pointer.hover(pt)
+                out.append("# \(cmd) \(arg) at \(pt)")
+            } else { out.append("# \(cmd) \(arg): NOT FOUND (\(matches.count) matches)") }
+        case "type":
+            // Types digits into the open sheet: "type:ax:<digits>" sets the field's value, "type:key:<digits>" sends key presses.
+            let parts = arg.components(separatedBy: ":")
+            if parts.count == 2, let sheet = ui.window.flatMap({ w in AX.find(in: w, maxDepth: 3) { AX.role($0) == "AXSheet" } }),
+               let field = AX.find(in: sheet, { AX.role($0) == "AXTextField" }) {
+                AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                let boxes = { AX.findAll(in: sheet) { AX.str($0, kAXSubroleAttribute) == "AXPasscodeBox" }.map { "\(AX.role($0).dropFirst(2))@\(AX.center($0).map { Int($0.x) } ?? -1)" }.joined(separator: " ") }
+                let before = boxes()
+                if parts[0] == "ax" { out.append("# type ax: \(AX.setValue(field, parts[1]) ? "ok" : "failed")") } else { Keyboard.type(parts[1]); out.append("# type key") }
+                Thread.sleep(forTimeInterval: 1)
+                out.append("#   boxes \(before) -> \(boxes())")
+            } else { out.append("# type: NO FIELD") }
+        case "show":
+            // Puts the window back on screen without bringing System Settings forward.
+            if let w = ui.window, var p = ui.visiblePosition(), let v = AXValueCreate(.cgPoint, &p) {
+                AXUIElementSetAttributeValue(w, kAXPositionAttribute as CFString, v)
+                Thread.sleep(forTimeInterval: 0.5)
+                out.append("# show at \(p)")
+            }
+        case "front":
+            ui.bringToFront()
+            out.append("# front: settings focused=\(ui.isFrontmost)")
+        case "back":
+            // Hands focus back to the app that was in front before System Settings opened.
+            if let prev = ui.previousApp, let url = prev.bundleURL {
+                let config = NSWorkspace.OpenConfiguration(); config.activates = true
+                NSWorkspace.shared.openApplication(at: url, configuration: config)
+                Thread.sleep(forTimeInterval: 0.8)
+                out.append("# back to \(prev.localizedName ?? "?")")
+            }
+        case "where":
+            // Window frame and the centers of elements labelled `arg`, to see what's inside the visible area.
+            if let w = ui.window {
+                let wp = AX.attr(w, kAXPositionAttribute).map { v -> CGPoint in var p = CGPoint.zero; AXValueGetValue(v as! AXValue, .cgPoint, &p); return p } ?? .zero
+                let ws = AX.attr(w, kAXSizeAttribute).map { v -> CGSize in var s = CGSize.zero; AXValueGetValue(v as! AXValue, .cgSize, &s); return s } ?? .zero
+                out.append("# window \(wp) \(ws)")
+                for el in AX.findAll(in: w, { AX.label($0) == arg }) { out.append("#   \(arg) at \(AX.center(el).map { "\($0)" } ?? "?")") }
+            }
+        case "attrs":
+            // Attribute names (settable marked *) of elements whose label or id is `arg`, and of their parents.
+            if let w = ui.window {
+                func names(_ el: AXUIElement) -> String {
+                    var n: CFArray?
+                    AXUIElementCopyAttributeNames(el, &n)
+                    return ((n as? [String]) ?? []).map { "\($0)\(AX.settable(el, $0) ? "*" : "")=\(AX.str(el, $0).prefix(30))" }.joined(separator: " ")
+                }
+                for el in AX.findAll(in: w, { AX.label($0) == arg || AX.str($0, kAXIdentifierAttribute as String) == arg }).prefix(4) {
+                    out.append("# \(AX.role(el)): \(names(el))")
+                    if let p = AX.attr(el, kAXParentAttribute) { out.append("    parent \(AX.role(p as! AXUIElement)): \(names(p as! AXUIElement))") }
+                }
+            }
         case "wait":
             Thread.sleep(forTimeInterval: Double(arg) ?? 1)
         case "dump":
@@ -278,6 +470,8 @@ func runAXSteps(_ steps: [String]) {
         }
     }
     try? out.joined(separator: "\n").write(to: dir.appendingPathComponent("ax-dump.txt"), atomically: true, encoding: .utf8)
+    // Put the window back (or quit System Settings) so a later run doesn't start from off-screen.
+    ui.finish()
 }
 
 extension Array where Element == String {

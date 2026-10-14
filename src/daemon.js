@@ -179,10 +179,59 @@ function extendLock(minutes) {
     return hard.rotateKeeper(endsAt).then(() => {
       state.lock.endsAt = endsAt;
       save();
+      timelockPasscode();
     }, (e) => { throw new UserError(`Couldn't extend hard mode (needs internet): ${e.message}`); });
   }
   state.lock.endsAt = endsAt;
   save();
+  timelockPasscode();
+}
+
+// ---------- Screen Time passcode ----------
+// When a lock reaches the iPhone, Time.app also turns on a random Screen Time passcode, so
+// "Ignore Limit" there asks for a code nobody knows. Time.app hands the code to the service
+// before typing it in; the service writes it to its root-only state file and a drand-locked
+// copy (for recover.js), and only gives it back once no lock is running.
+
+function keepPasscode(code) {
+  code = String(code ?? '');
+  if (!/^\d{4}$/.test(code)) throw new UserError('A Screen Time passcode is 4 digits.');
+  if (state.stPasscode) {
+    if (state.stPasscode.code === code) return;
+    throw new UserError('Time already holds a Screen Time passcode.');
+  }
+  if (!lockActive()) throw new UserError('No lock is running.');
+  state.stPasscode = { code, since: clock.now() };
+  save();
+  log('holding a new Screen Time passcode');
+  timelockPasscode();
+}
+
+// Best effort: offline, the copy is skipped and the state file is the only record.
+function timelockPasscode() {
+  const held = state.stPasscode;
+  if (!held || !lockActive()) return;
+  const endsAt = state.lock.endsAt;
+  hard.timelock(held.code, endsAt).then(({ round, ciphertext }) => {
+    fs.mkdirSync(path.dirname(cfg.paths.passcodeRecovery), { recursive: true });
+    fs.writeFileSync(cfg.paths.passcodeRecovery, JSON.stringify({ what: 'Screen Time passcode', unlocksAt: new Date(endsAt).toISOString(), round, ciphertext }, null, 2), { mode: 0o644 });
+  }, (e) => log(`couldn't time-lock the Screen Time passcode (offline?): ${e.message}`));
+}
+
+function revealPasscode() {
+  if (!state.stPasscode) throw new UserError('Time holds no Screen Time passcode.');
+  if (lockActive()) throw new UserError(`The Screen Time passcode stays locked until ${fmt(state.lock.endsAt)}.`);
+  return state.stPasscode.code;
+}
+
+function forgetPasscode(code) {
+  if (lockActive()) throw new UserError('A lock is running.');
+  if (state.stPasscode && state.stPasscode.code === String(code)) {
+    state.stPasscode = null;
+    save();
+    try { fs.unlinkSync(cfg.paths.passcodeRecovery); } catch {}
+    log('Screen Time passcode turned off and forgotten');
+  }
 }
 
 async function finishLock(reason) {
@@ -335,9 +384,10 @@ function status() {
       count: Object.keys(state.screenTime.items).length,
       // Lists read by older versions have no categories; read again to get them.
       needsRefresh: !state.screenTime.importedAt || Object.values(state.screenTime.items).some((it) => !('category' in it)),
+      passcodeHeld: !!state.stPasscode,
     },
     blocks: allBlocks().map((b) => ({
-      id: b.id, name: b.name, custom: b.custom, bundleIds: b.bundleIds, domains: b.domains,
+      id: b.id, name: b.name, custom: b.custom, bundleIds: b.bundleIds, domains: b.domains, screenTimeName: b.screenTimeName || null,
       source: b.source, seconds: b.seconds ?? null, hasLimit: !!b.hasLimit,
       category: b.category || (b.custom ? 'Your own' : 'Other'), used: b.used !== false,
       enabled: !!state.enabled[b.id], locked: isLocked(b.id),
@@ -400,9 +450,12 @@ async function handle(req, res) {
   if (req.method !== 'POST' || req.headers['x-time'] !== '1') return send(res, 404, { error: 'Not found' });
   const body = await readJson(req);
   let m;
+  if (p === '/api/screentime/passcode/reveal') return send(res, 200, { code: revealPasscode() });
   if ((m = p.match(/^\/api\/blocks\/([\w-]+)$/))) setEnabled(m[1], body.enabled);
   else if (p === '/api/custom') addCustom(body);
   else if (p === '/api/screentime/import') importScreenTime(body.items);
+  else if (p === '/api/screentime/passcode') keepPasscode(body.code);
+  else if (p === '/api/screentime/passcode/forget') forgetPasscode(body.code);
   else if ((m = p.match(/^\/api\/custom\/([\w-]+)\/delete$/))) removeCustom(m[1]);
   else if (p === '/api/lock') await startLock(body);
   else if (p === '/api/lock/extend') await extendLock(body.minutes);

@@ -9,6 +9,7 @@ const paths = DEV
       root: path.resolve(__dirname, '..'),
       state: path.resolve(__dirname, '..', '.dev-state', 'state.json'),
       recovery: path.resolve(__dirname, '..', '.dev-state', 'timekeeper.tlock'),
+      passcodeRecovery: path.resolve(__dirname, '..', '.dev-state', 'screentime-passcode.tlock'),
       hosts: path.resolve(__dirname, '..', '.dev-state', 'hosts'),
       installConfig: path.resolve(__dirname, '..', '.dev-state', 'install.json'),
     }
@@ -16,6 +17,7 @@ const paths = DEV
       root: INSTALL_DIR,
       state: path.join(INSTALL_DIR, 'state', 'state.json'),
       recovery: path.join(INSTALL_DIR, 'recovery', 'timekeeper.tlock'),
+      passcodeRecovery: path.join(INSTALL_DIR, 'recovery', 'screentime-passcode.tlock'),
       hosts: '/etc/hosts',
       installConfig: path.join(INSTALL_DIR, 'install.json'),
     };
