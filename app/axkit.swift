@@ -278,8 +278,10 @@ final class SettingsUI {
     }
 }
 
-/// Developer tool: `open -n -a Time --args --ax <step> ...` runs steps against System Settings and
-/// writes what it sees to ~/Library/Application Support/Time/ax-dump.txt, then quits.
+#if TIME_DEVTOOLS
+/// Developer tool, in `./build-app.sh --dev` builds only: `open -n -a Time --args --ax <step> ...` runs
+/// steps against System Settings and writes what it sees to ~/Library/Application Support/Time/ax-dump.txt,
+/// then quits.
 /// Steps: url:<settings url>  press:<label>  wait:<seconds>  dump[:<depth>]  sheet
 func runAXSteps(_ steps: [String]) {
     let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Time")
@@ -477,3 +479,4 @@ func runAXSteps(_ steps: [String]) {
 extension Array where Element == String {
     func splitPair() -> (String, String) { (self.first ?? "", self.count > 1 ? self[1] : "") }
 }
+#endif

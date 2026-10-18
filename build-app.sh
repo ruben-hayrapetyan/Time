@@ -1,6 +1,17 @@
 #!/bin/bash
-# Builds Time.app into build/ and copies it to /Applications.  ./build-app.sh [--no-install]
+# Builds Time.app into build/ and copies it to /Applications.  ./build-app.sh [--no-install] [--dev]
+# --dev compiles in the developer flags (--ax, --read-screentime, --add-limit, ...).
 set -euo pipefail
+
+INSTALL=1
+SWIFT_DEFINES=""
+for arg in "$@"; do
+  case "$arg" in
+    --no-install) INSTALL=0 ;;
+    --dev) SWIFT_DEFINES="-DTIME_DEVTOOLS" ;;
+    *) echo "Error: unknown option $arg" >&2; exit 1 ;;
+  esac
+done
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 OUT="$REPO/build/Time.app"
@@ -14,7 +25,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources/payload"
 
 echo "==> Compiling"
-swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos13.0" \
+swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos13.0" $SWIFT_DEFINES \
   -framework AppKit -framework WebKit \
   -o "$OUT/Contents/MacOS/Time" "$REPO/app/main.swift" "$REPO/app/axkit.swift" "$REPO/app/screentime.swift"
 
@@ -71,7 +82,7 @@ echo "==> Signing ($IDENTITY)"
 codesign --force --deep --sign "$IDENTITY" "$OUT" >/dev/null 2>&1
 codesign --verify --deep "$OUT"
 
-if [ "${1:-}" != "--no-install" ]; then
+if [ "$INSTALL" = 1 ]; then
   echo "==> Copying to /Applications"
   pkill -x Time 2>/dev/null || true
   rm -rf /Applications/Time.app

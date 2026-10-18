@@ -156,7 +156,7 @@ npm install
 npm run dev   # http://localhost:7778, dry run: nothing is closed, hosts goes to .dev-state/
 ```
 
-`./build-app.sh --no-install` builds into `build/` without touching `/Applications`.
+`./build-app.sh --no-install` builds into `build/` without touching `/Applications`. `./build-app.sh --dev` adds the developer flags (`--read-screentime`, `--add-limit`, `--ax`, and others) that test the Screen Time automation from the command line. Normal builds leave them out, because they let anything that can launch Time use its Accessibility access.
 
 By default the app is signed ad hoc, so macOS forgets its Accessibility permission on every rebuild. To keep it, create a self-signed certificate named **Time Local Signing** in Keychain Access (Keychain Access → Certificate Assistant → Create a Certificate…, with Certificate Type set to Code Signing). `build-app.sh` uses it automatically.
 

@@ -479,6 +479,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     @objc func reload() { route() }
 }
 
+// Developer checks, compiled in only by `./build-app.sh --dev`. They work System Settings with Time's
+// Accessibility access, so in a normal build any program that can launch Time could use them.
+#if TIME_DEVTOOLS
 if CommandLine.arguments.contains("--read-screentime") {
     // Developer check: run the real reader and save what it found.
     let out = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Time/screentime-read.json")
@@ -518,6 +521,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--ax") {
     runAXSteps(Array(CommandLine.arguments[(i + 1)...]))
     exit(0)
 }
+#endif
 
 let app = NSApplication.shared
 let delegate = AppDelegate()
