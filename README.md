@@ -31,37 +31,44 @@
 
 ## Requirements
 
-- A Mac running **macOS 13 Ventura or later**. Time is developed and tested on macOS 26 Tahoe on Apple silicon.
+- A Mac running **macOS 13 Ventura or later**, Apple silicon or Intel. Time is developed and tested on macOS 26 Tahoe on Apple silicon.
 - An **admin account**. You enter your password once, to install.
-- **Xcode Command Line Tools**, to compile the app: `xcode-select --install`
-- **Node.js 18 or later** with npm, to build. The background service downloads its own copy of Node, so it doesn't depend on yours.
-- **An internet connection** while installing.
+- **An internet connection** while installing. The background service downloads its own copy of Node.js.
 - For the Screen Time features: **Screen Time turned on**, and macOS set to **English** (Time finds its way around System Settings by the English labels). To reach your iPhone and iPad, also turn on **Share across devices** and **App Limits** in Screen Time.
 
 ## Install
 
-1. **Build the app.**
+1. **Download Time.** Get `Time-<version>.zip` from the [latest release](https://github.com/ruben-hayrapetyan/Time/releases/latest), unzip it, and drag **Time** into your Applications folder.
 
-   ```sh
-   git clone https://github.com/ruben-hayrapetyan/Time.git
-   cd Time
-   ./build-app.sh
-   ```
+2. **Open Time.** Time isn't notarized by Apple, so the first time you open it macOS says it can't verify the app. Click **Done**, then go to System Settings → Privacy & Security, scroll down to the message about Time, and click **Open Anyway**. You only do this once per download.
 
-   This compiles Time.app and copies it to `/Applications`, replacing any app there already called Time.
+3. **Click Install** in Time's window. macOS asks for your password once to set up the background service.
 
-2. **Open Time** from Applications and click **Install**. macOS asks for your password once to set up the background service.
+4. **Allow Accessibility access** when macOS asks: System Settings → Privacy & Security → Accessibility → turn on **Time**. Time uses it to read your Screen Time list and to manage limits. Then click **Refresh from Screen Time**.
 
-3. **Allow Accessibility access** when macOS asks: System Settings → Privacy & Security → Accessibility → turn on **Time**. Time uses it to read your Screen Time list and to manage limits. Then click **Refresh from Screen Time**.
+5. **Wait about a minute** while Time reads Screen Time. System Settings opens out of sight and quits when it's done.
 
-4. **Wait about a minute** while Time reads Screen Time. System Settings opens out of sight and quits when it's done.
+6. **Keep Time running.** It sits in the menu bar with the lock countdown, and it's the part that sets up and removes the iPhone and iPad limits. To keep it running after a restart, add it under System Settings → General → Login Items.
 
-5. **Keep Time running.** It sits in the menu bar with the lock countdown, and it's the part that sets up and removes the iPhone and iPad limits. To keep it running after a restart, add it under System Settings → General → Login Items.
+<details>
+<summary>Building from source</summary>
+
+You need **Xcode Command Line Tools** (`xcode-select --install`) and **Node.js 18 or later** with npm.
+
+```sh
+git clone https://github.com/ruben-hayrapetyan/Time.git
+cd Time
+./build-app.sh
+```
+
+This compiles Time.app and copies it to `/Applications`, replacing any app there already called Time. A Mac that built the app itself doesn't need **Open Anyway**. Continue from step 3.
+
+</details>
 
 <details>
 <summary>Installing without the app</summary>
 
-The same service installs from a terminal:
+The same service installs from a terminal, from a clone of this repo:
 
 ```sh
 sudo ./install.sh
@@ -95,13 +102,9 @@ The control page is then at **http://localhost:7777** in any browser. Without Ti
 
 ## Updating
 
-```sh
-cd Time
-git pull
-./build-app.sh
-```
+Download the newest zip from [Releases](https://github.com/ruben-hayrapetyan/Time/releases/latest), quit Time, and replace the Time in Applications with the new one. Open it (with **Open Anyway** again if macOS asks) and click **Update**. Updates wait until no lock is running.
 
-Then open Time and click **Update**. Updates wait until no lock is running.
+If you built from source, run `git pull` and `./build-app.sh` instead, then click **Update**.
 
 ## Uninstalling
 
@@ -131,7 +134,7 @@ The uninstaller removes the service, the program files, the hosts section, and t
 
 ## If something goes wrong
 
-**"Time needs Accessibility access."** Turn Time on in System Settings → Privacy & Security → Accessibility. After a rebuild, macOS may treat Time as a new app: remove it from the list with **−**, add it again, and click Refresh from Screen Time. (See [Development](#development) for a way to stop this.)
+**"Time needs Accessibility access."** Turn Time on in System Settings → Privacy & Security → Accessibility. If you build Time yourself, macOS may treat each rebuild as a new app: remove it from the list with **−**, add it again, and click Refresh from Screen Time. (See [Development](#development) for a way to stop this.)
 
 **The list shows common apps, not mine.** The Screen Time read hasn't worked yet. Check that Screen Time is on and macOS is in English, then click **Refresh from Screen Time**. In a regular browser the page always shows common apps, so open the Time app instead.
 
@@ -156,7 +159,7 @@ npm install
 npm run dev   # http://localhost:7778, dry run: nothing is closed, hosts goes to .dev-state/
 ```
 
-`./build-app.sh --no-install` builds into `build/` without touching `/Applications`. `./build-app.sh --dev` adds the developer flags (`--read-screentime`, `--add-limit`, `--ax`, and others) that test the Screen Time automation from the command line. Normal builds leave them out, because they let anything that can launch Time use its Accessibility access.
+`./build-app.sh --no-install` builds into `build/` without touching `/Applications`. `./build-app.sh --release` builds for both Apple silicon and Intel and writes `build/Time-<version>.zip` for a GitHub release. `./build-app.sh --dev` adds the developer flags (`--read-screentime`, `--add-limit`, `--ax`, and others) that test the Screen Time automation from the command line. Normal builds leave them out, because they let anything that can launch Time use its Accessibility access.
 
 By default the app is signed ad hoc, so macOS forgets its Accessibility permission on every rebuild. To keep it, create a self-signed certificate named **Time Local Signing** in Keychain Access (Keychain Access → Certificate Assistant → Create a Certificate…, with Certificate Type set to Code Signing). `build-app.sh` uses it automatically.
 

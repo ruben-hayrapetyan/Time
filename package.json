@@ -1,6 +1,6 @@
 {
   "name": "time",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "Local app/site blocker with an un-skippable lock timer",
   "main": "src/daemon.js",
   "scripts": {

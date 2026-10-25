@@ -1,17 +1,21 @@
 #!/bin/bash
-# Builds Time.app into build/ and copies it to /Applications.  ./build-app.sh [--no-install] [--dev]
+# Builds Time.app into build/ and copies it to /Applications.  ./build-app.sh [--no-install] [--dev] [--release]
 # --dev compiles in the developer flags (--ax, --read-screentime, --add-limit, ...).
+# --release builds for both Apple silicon and Intel and zips the app for a GitHub release, without installing.
 set -euo pipefail
 
 INSTALL=1
+RELEASE=0
 SWIFT_DEFINES=""
 for arg in "$@"; do
   case "$arg" in
     --no-install) INSTALL=0 ;;
     --dev) SWIFT_DEFINES="-DTIME_DEVTOOLS" ;;
+    --release) RELEASE=1; INSTALL=0 ;;
     *) echo "Error: unknown option $arg" >&2; exit 1 ;;
   esac
 done
+[ "$RELEASE" = 1 ] && [ -n "$SWIFT_DEFINES" ] && { echo "Error: --release can't include --dev" >&2; exit 1; }
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 OUT="$REPO/build/Time.app"
@@ -24,10 +28,16 @@ BUILD="$(date +%Y%m%d%H%M%S)"
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources/payload"
 
-echo "==> Compiling"
-swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos13.0" $SWIFT_DEFINES \
-  -framework AppKit -framework WebKit \
-  -o "$OUT/Contents/MacOS/Time" "$REPO/app/main.swift" "$REPO/app/axkit.swift" "$REPO/app/screentime.swift"
+ARCHS="$(uname -m)"
+[ "$RELEASE" = 1 ] && ARCHS="arm64 x86_64"
+
+echo "==> Compiling ($ARCHS)"
+for arch in $ARCHS; do
+  swiftc -O -swift-version 5 -target "$arch-apple-macos13.0" $SWIFT_DEFINES \
+    -framework AppKit -framework WebKit \
+    -o "$REPO/build/Time-$arch" "$REPO/app/main.swift" "$REPO/app/axkit.swift" "$REPO/app/screentime.swift"
+done
+lipo -create $(for arch in $ARCHS; do echo "$REPO/build/Time-$arch"; done) -output "$OUT/Contents/MacOS/Time"
 
 echo "==> Icon"
 ICONSET="$REPO/build/AppIcon.iconset"
@@ -78,11 +88,19 @@ EOF
 # A stable local certificate keeps macOS permissions (Accessibility) across rebuilds.
 IDENTITY="Time Local Signing"
 security find-identity -p codesigning | grep -q "\"$IDENTITY\"" || IDENTITY="-"
+# Releases need the same certificate every time, or each update loses its Accessibility permission.
+[ "$RELEASE" = 1 ] && [ "$IDENTITY" = "-" ] && { echo "Error: --release needs the \"Time Local Signing\" certificate" >&2; exit 1; }
 echo "==> Signing ($IDENTITY)"
 codesign --force --deep --sign "$IDENTITY" "$OUT" >/dev/null 2>&1
 codesign --verify --deep "$OUT"
 
-if [ "$INSTALL" = 1 ]; then
+if [ "$RELEASE" = 1 ]; then
+  ZIP="$REPO/build/Time-$VERSION.zip"
+  rm -f "$ZIP"
+  # ditto keeps the signature and permissions intact, which a plain zip can break.
+  ditto -c -k --keepParent "$OUT" "$ZIP"
+  echo "Built $ZIP"
+elif [ "$INSTALL" = 1 ]; then
   echo "==> Copying to /Applications"
   pkill -x Time 2>/dev/null || true
   rm -rf /Applications/Time.app
