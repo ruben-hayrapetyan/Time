@@ -112,6 +112,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                           backing: .buffered, defer: false)
         window.title = "Time"
         window.titlebarAppearsTransparent = true
+        // Leave the window out of screenshots and screen recordings.
+        window.sharingType = .none
         window.minSize = NSSize(width: 420, height: 560)
         window.backgroundColor = NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
