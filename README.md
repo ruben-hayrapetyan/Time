@@ -88,7 +88,7 @@ The control page is then at **http://localhost:7777** in any browser. Without Ti
 
 **Hard mode.** This is optional for each lock. It needs internet to start and lasts up to 72 hours. Your account leaves the `admin` group until the timer ends, and any open `sudo` or `su` sessions are closed. Your admin rights come back on their own when the lock ends.
 
-**Emergency unlock.** If you really need out, type a 50-word passage by hand. Pasting is off, and it has to take at least 90 seconds. Then wait 20 more minutes with the blocks still on. You can cancel at any point and stay locked.
+**Emergency unlock.** If you really need out, type a 50-word passage by hand. Pasting is off, and it has to take at least 90 seconds. Then wait 20 more minutes with the blocks still on. You can cancel at any point and stay locked. Pick **Everything** to end the whole lock, or one locked app to unlock only that app on this Mac while the rest stays locked until the timer ends. An app unlocked this way keeps its iPhone and iPad limit until the lock ends.
 
 ## How the lock resists being bypassed
 

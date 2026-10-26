@@ -98,10 +98,15 @@
     <section class="emergency" id="emergency" hidden aria-labelledby="emTitle">
       <h2 id="emTitle">Emergency unlock</h2>
       <div id="emIdle">
-        <p class="hint">For real emergencies only. You'll type a long passage by hand (pasting is off), then wait <span id="emCooldown">20</span> minutes with the blocks still on before they lift.</p>
+        <p class="hint">For real emergencies only. You'll type a long passage by hand (pasting is off), then wait <span id="emCooldown">20</span> minutes with the blocks still on before they lift. Unlocking one app leaves the rest locked until the timer ends.</p>
+        <label class="em-target">
+          <span>Unlock</span>
+          <select id="emTarget" aria-label="What to unlock"></select>
+        </label>
         <button class="ghost danger" id="emStart">Start emergency unlock</button>
       </div>
       <div id="emTyping" hidden>
+        <p class="hint" id="emTypingFor"></p>
         <p class="hint">Type this exactly. Spaces and capitals don't matter.</p>
         <p class="challenge" id="emChallenge" aria-describedby="emProgress"></p>
         <textarea id="emInput" rows="5" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Type the passage"></textarea>

@@ -283,6 +283,13 @@ function renderLock() {
       + (S.screenTime && S.screenTime.passcodeHeld ? ' Screen Time is passcode-locked until then; apps you turn on now stay blocked on this Mac only.' : '');
     const em = lock.emergency;
     $('emIdle').hidden = !!em;
+    renderEmTarget();
+    if (em) {
+      $('emTypingFor').textContent = em.blockId
+        ? `Unlocking ${em.blockName || 'one app'} on this Mac only. Everything else stays locked.`
+          + (S.screenTime && S.screenTime.passcodeHeld ? ' Its limit on your iPhone and iPad stays until the lock ends, because the Screen Time passcode does.' : '')
+        : 'Unlocking everything.';
+    }
     $('emTyping').hidden = !(em && em.challenge);
     $('emWaiting').hidden = !(em && em.unlockAt);
     if (em && em.challenge && $('emChallenge').textContent !== em.challenge) {
@@ -302,9 +309,34 @@ function renderLock() {
   c.classList.toggle('offline', !S.clockSynced);
 }
 
+// "Everything" or one locked app; keeps the choice across refreshes while that app is still locked.
+function renderEmTarget() {
+  const sel = $('emTarget');
+  const locked = S.blocks.filter((b) => b.locked).sort((x, y) => x.name.localeCompare(y.name));
+  const key = locked.map((b) => b.id).join(',');
+  if (sel.dataset.key === key) return;
+  const prev = sel.value;
+  sel.dataset.key = key;
+  sel.innerHTML = '';
+  const all = document.createElement('option');
+  all.value = '';
+  all.textContent = 'Everything';
+  sel.appendChild(all);
+  for (const b of locked) {
+    const o = document.createElement('option');
+    o.value = b.id;
+    o.textContent = `Only ${b.name}`;
+    sel.appendChild(o);
+  }
+  sel.value = locked.some((b) => b.id === prev) ? prev : '';
+}
+
 function renderEmergencyWait() {
   const em = S?.lock?.emergency;
-  if (em && em.unlockAt) $('emWaitText').textContent = `Blocks lift in ${hms(em.unlockAt - serverNow())}. Cancel any time to stay locked.`;
+  if (em && em.unlockAt) {
+    const what = em.blockId ? `${em.blockName || 'This app'} unlocks` : 'Blocks lift';
+    $('emWaitText').textContent = `${what} in ${hms(em.unlockAt - serverNow())}. Cancel any time to stay locked.`;
+  }
 }
 
 function lockLabel() {
@@ -349,7 +381,7 @@ $('emInput').addEventListener('input', (e) => {
   updateProgress();
 });
 $('emChallenge').addEventListener('copy', (e) => e.preventDefault());
-$('emStart').onclick = () => act('/api/emergency/start', {});
+$('emStart').onclick = () => act('/api/emergency/start', $('emTarget').value ? { blockId: $('emTarget').value } : {});
 $('emSubmit').onclick = () => act('/api/emergency/submit', { text: $('emInput').value }, 'Accepted. The cooldown has started.');
 $('emCancel').onclick = $('emCancel2').onclick = () => act('/api/emergency/cancel', {}, 'Staying locked.');
 

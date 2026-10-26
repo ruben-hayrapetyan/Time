@@ -269,10 +269,12 @@ async function repairHardMode() {
 
 // ---------- emergency exit (layer 4) ----------
 
-function emergencyStart() {
+// With a block id, only that block comes out of the lock; the timer keeps running for the rest.
+function emergencyStart(blockId) {
   if (!lockActive()) throw new UserError('No lock is running.');
   if (state.lock.emergency?.unlockAt) throw new UserError('An emergency unlock is already counting down.');
-  state.lock.emergency = { challenge: words.challenge(50), issuedAt: clock.now(), unlockAt: null };
+  if (blockId != null && !isLocked(blockId)) throw new UserError("That app isn't locked.");
+  state.lock.emergency = { challenge: words.challenge(50), issuedAt: clock.now(), unlockAt: null, blockId: blockId ?? null };
   save();
 }
 
@@ -285,9 +287,20 @@ function emergencySubmit(text) {
   if (typedFor < cfg.LIMITS.emergencyMinTypingSeconds) {
     throw new UserError(`That was too fast to have been typed (${Math.round(typedFor)}s). Type it by hand.`);
   }
-  state.lock.emergency = { challenge: null, issuedAt: e.issuedAt, unlockAt: clock.now() + cfg.LIMITS.emergencyCooldownMinutes * MIN };
+  state.lock.emergency = { challenge: null, issuedAt: e.issuedAt, unlockAt: clock.now() + cfg.LIMITS.emergencyCooldownMinutes * MIN, blockId: e.blockId ?? null };
   save();
-  log('emergency unlock accepted; cooldown started');
+  log(`emergency unlock accepted${e.blockId ? ` for ${e.blockId}` : ''}; cooldown started`);
+}
+
+// The one block comes off and stays off; turning it back on locks it again.
+async function emergencyUnlockBlock(id) {
+  state.lock.lockedIds = state.lock.lockedIds.filter((x) => x !== id);
+  state.enabled[id] = false;
+  state.lock.emergency = null;
+  log(`emergency unlock lifted ${id}`);
+  if (!state.lock.lockedIds.length) return finishLock('emergency unlock of the last locked app');
+  save();
+  enforceNow();
 }
 
 function emergencyCancel() {
@@ -358,7 +371,10 @@ async function tick() {
   if (state.lock) {
     const now = clock.now();
     if (now >= state.lock.endsAt) await finishLock('timer finished');
-    else if (state.lock.emergency?.unlockAt && now >= state.lock.emergency.unlockAt) await finishLock('emergency unlock');
+    else if (state.lock.emergency?.unlockAt && now >= state.lock.emergency.unlockAt) {
+      if (state.lock.emergency.blockId) await emergencyUnlockBlock(state.lock.emergency.blockId);
+      else await finishLock('emergency unlock');
+    }
   }
   await repairHardMode();
   await enforceNow();
@@ -376,7 +392,10 @@ function status() {
       startedAt: state.lock.startedAt,
       hard: state.lock.hard,
       keepAfter: state.lock.keepAfter,
-      emergency: state.lock.emergency && { challenge: state.lock.emergency.challenge, issuedAt: state.lock.emergency.issuedAt, unlockAt: state.lock.emergency.unlockAt },
+      emergency: state.lock.emergency && {
+        challenge: state.lock.emergency.challenge, issuedAt: state.lock.emergency.issuedAt, unlockAt: state.lock.emergency.unlockAt,
+        blockId: state.lock.emergency.blockId || null, blockName: state.lock.emergency.blockId ? findBlock(state.lock.emergency.blockId)?.name || null : null,
+      },
     },
     hardActive: !!state.hard?.active,
     screenTime: {
@@ -459,7 +478,7 @@ async function handle(req, res) {
   else if ((m = p.match(/^\/api\/custom\/([\w-]+)\/delete$/))) removeCustom(m[1]);
   else if (p === '/api/lock') await startLock(body);
   else if (p === '/api/lock/extend') await extendLock(body.minutes);
-  else if (p === '/api/emergency/start') emergencyStart();
+  else if (p === '/api/emergency/start') emergencyStart(body.blockId);
   else if (p === '/api/emergency/submit') emergencySubmit(body.text);
   else if (p === '/api/emergency/cancel') emergencyCancel();
   else return send(res, 404, { error: 'Not found' });
