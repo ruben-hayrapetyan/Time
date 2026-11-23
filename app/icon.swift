@@ -1,5 +1,5 @@
 // Draws the app icon (enamel safe door with a brass time-lock dial) to a 1024px PNG.
-// Usage: swift icon.swift out.png
+// Usage: swift icon.swift out.png [ios]   (ios: full-bleed square, for the iPhone app)
 import AppKit
 
 let size: CGFloat = 1024
@@ -13,9 +13,10 @@ let brass = NSColor(srgbRed: 0.725, green: 0.561, blue: 0.243, alpha: 1)
 let steel = NSColor(srgbRed: 0.663, green: 0.71, blue: 0.686, alpha: 1)
 
 // Squircle-ish background with the standard macOS icon inset.
-let inset: CGFloat = 100
+let ios = CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "ios"
+let inset: CGFloat = ios ? 0 : 100
 let bgRect = NSRect(x: inset, y: inset, width: size - 2 * inset, height: size - 2 * inset)
-let bg = NSBezierPath(roundedRect: bgRect, xRadius: 185, yRadius: 185)
+let bg = ios ? NSBezierPath(rect: bgRect) : NSBezierPath(roundedRect: bgRect, xRadius: 185, yRadius: 185)
 NSGradient(starting: enamel, ending: enamelDeep)!.draw(in: bg, angle: -90)
 
 let c = NSPoint(x: size / 2, y: size / 2)

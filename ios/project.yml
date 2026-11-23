@@ -1,0 +1,72 @@
+# Generate the Xcode project with: xcodegen   (brew install xcodegen)
+name: TimePhone
+options:
+  bundleIdPrefix: com.rubenhayrapetyan
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: J9SGR27W4A
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  Time:
+    type: application
+    platform: iOS
+    sources: [TimePhone, Shared]
+    settings:
+      base:
+        PRODUCT_NAME: Time
+        PRODUCT_BUNDLE_IDENTIFIER: com.rubenhayrapetyan.time.phone
+        CODE_SIGN_ENTITLEMENTS: TimePhone/Time.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Time
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UIRequiresFullScreen: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+    dependencies:
+      - target: TimeMonitor
+      - target: TimeShield
+  TimeMonitor:
+    type: app-extension
+    platform: iOS
+    sources: [Monitor, Shared]
+    info:
+      path: Monitor/Info.plist
+      properties:
+        CFBundleDisplayName: Time Monitor
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.deviceactivity.monitor-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MonitorExtension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rubenhayrapetyan.time.phone.monitor
+        CODE_SIGN_ENTITLEMENTS: Monitor/Monitor.entitlements
+  TimeShield:
+    type: app-extension
+    platform: iOS
+    sources: [Shield, Shared]
+    info:
+      path: Shield/Info.plist
+      properties:
+        CFBundleDisplayName: Time Shield
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.ManagedSettingsUI.shield-configuration-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShieldExtension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rubenhayrapetyan.time.phone.shield
+        CODE_SIGN_ENTITLEMENTS: Shield/Shield.entitlements
