@@ -122,15 +122,7 @@ function coverage(b) {
   const parts = [];
   if (b.bundleIds.length) parts.push('Mac app');
   if (b.domains.length) parts.push(b.domains.length === 1 ? b.domains[0] : `${b.domains[0]} +${b.domains.length - 1}`);
-  return parts.length ? parts.join(' · ') : 'not on this Mac';
-}
-
-function ago(ms) {
-  const min = Math.round((serverNow() - ms) / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min} min ago`;
-  const h = Math.round(min / 60);
-  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+  return parts.join(' · ');
 }
 
 function blockRow(b) {
@@ -176,12 +168,10 @@ function blockRow(b) {
 function renderBlocks() {
   const imported = S.screenTime && S.screenTime.importedAt;
   $('stSource').textContent = imported
-    ? `From your Screen Time, all devices, this week. Updated ${ago(S.screenTime.importedAt)}.`
-    : inApp ? 'Reading your Screen Time list…' : 'Open the Time app to load your apps from Screen Time. Showing common apps until then.';
-  $('stRefresh').hidden = !inApp;
-  $('stNote').textContent = imported
-    ? phoneNote || 'Toggles close Mac apps and block websites on this Mac. Locking an app also blocks it on your iPhone and iPad: Time turns on a Screen Time passcode nobody knows until the lock ends and gives the app a 1-minute daily limit that blocks when it runs out, with no Ignore Limit. Both are removed when the lock ends.'
-    : '';
+    ? `Your apps from Screen Time, as of ${new Date(S.screenTime.importedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, that Time can block on this Mac.`
+    : 'Common apps and websites. Add any other Mac app or website under Add your own.';
+  $('stNote').textContent = 'Toggles close Mac apps and block websites on this Mac. For your iPhone, use the Time app there.';
+  renderLeftover();
 
   const q = $('filter').value.trim().toLowerCase();
   const groups = new Map();
@@ -226,6 +216,26 @@ function renderBlocks() {
       meta.appendChild(span);
     }
     head.append(h, meta);
+    // One click for the whole category (or for what the filter shows of it).
+    const off = all.filter((b) => !b.enabled);
+    const canUnblock = all.filter((b) => b.enabled && !b.locked);
+    if (off.length || canUnblock.length) {
+      const allBtn = document.createElement('button');
+      allBtn.className = 'ghost group-all';
+      const locking = !!(S.lock && S.lock.endsAt);
+      if (off.length) {
+        allBtn.textContent = off.length === all.length ? `Block all ${all.length}` : `Block the other ${off.length}`;
+        allBtn.onclick = () => {
+          // Mid-lock, anything switched on joins the lock and can't be switched back off.
+          if (locking && !confirm(`Lock ${off.length} more in ${cat}?\n\nThey join the running lock and stay blocked until ${when(S.lock.endsAt)}.`)) return;
+          act('/api/blocks/bulk', { ids: off.map((b) => b.id), enabled: true }, `Blocked ${off.length} in ${cat}.`);
+        };
+      } else {
+        allBtn.textContent = canUnblock.length === all.length ? 'Unblock all' : `Unblock ${canUnblock.length}`;
+        allBtn.onclick = () => act('/api/blocks/bulk', { ids: canUnblock.map((b) => b.id), enabled: false }, `Unblocked ${canUnblock.length} in ${cat}.`);
+      }
+      head.appendChild(allBtn);
+    }
 
     const ul = document.createElement('ul');
     ul.className = 'block-list';
@@ -245,28 +255,54 @@ function renderBlocks() {
   $('neverLock').textContent = 'Never locked: Phone, Messages, FaceTime, and calendar apps. They are left out of this list on purpose.';
 }
 
-// Called by Time.app around a Screen Time read.
-window.screenTimeBusy = (busy) => {
-  $('stRefresh').disabled = busy;
-  $('stRefresh').textContent = busy ? 'Reading Screen Time (about a minute)…' : 'Refresh from Screen Time';
+// Baskets: one click switches on every app in the set (it never switches anything off).
+function renderBaskets() {
+  const root = $('baskets');
+  root.innerHTML = '';
+  const locking = !!(S.lock && S.lock.endsAt);
+  for (const k of S.baskets || []) {
+    const wrap = document.createElement('span');
+    wrap.className = 'basket';
+    const off = k.ids.length - k.on;
+    const go = document.createElement('button');
+    go.className = 'chip';
+    go.setAttribute('aria-checked', String(k.ids.length > 0 && off === 0));
+    go.textContent = `${k.name} · ${k.ids.length}`;
+    go.title = off ? `Block the ${k.ids.length} in ${k.name} (${off} not on yet)` : `Everything in ${k.name} is on`;
+    go.disabled = k.ids.length > 0 && off === 0;
+    go.onclick = () => {
+      // Mid-lock, anything switched on joins the lock and can't be switched back off.
+      if (locking && !confirm(`Lock ${off} more from ${k.name}?\n\nThey join the running lock and stay blocked until ${when(S.lock.endsAt)}.`)) return;
+      act(`/api/baskets/${k.id}/apply`, {}, `Blocked ${k.name}.`);
+    };
+    const del = document.createElement('button');
+    del.className = 'basket-del';
+    del.textContent = '×';
+    del.title = `Delete the basket ${k.name} (the apps stay as they are)`;
+    del.setAttribute('aria-label', `Delete basket ${k.name}`);
+    del.onclick = () => act(`/api/baskets/${k.id}/delete`, {}, `Deleted the basket ${k.name}.`);
+    wrap.append(go, del);
+    root.appendChild(wrap);
+  }
+  const on = S.blocks.filter((b) => b.enabled).length;
+  $('basketSave').textContent = on ? `Save the ${on} that ${on === 1 ? 'is' : 'are'} on as a basket` : "Save what's on as a basket";
+  $('basketSave').disabled = !on;
+}
+$('basketForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const name = $('basketName').value.trim();
+  if (!name) { toast('Give the basket a name.'); $('basketName').focus(); return; }
+  if (await act('/api/baskets', { name }, `Saved the basket ${name}.`)) $('basketName').value = '';
 };
-window.screenTimeDone = (err, n) => {
-  window.screenTimeBusy(false);
-  if (err) toast(err); else toast(`Loaded ${n} apps from Screen Time.`, true);
-  refresh();
-};
-// Called by Time.app while it adds or removes Screen Time limits for locked apps.
-let phoneNote = '';
-window.phoneSyncBusy = () => {
-  phoneNote = 'Setting up Screen Time on your iPhone and iPad. System Settings comes up for about 30 seconds; please don’t touch the mouse or keyboard until it closes.';
-  if (S) renderBlocks();
-};
-window.phoneSyncDone = (err, ok) => {
-  phoneNote = '';
-  if (err) toast(err); else if (ok) toast(ok, true);
-  if (S) renderBlocks();
-};
-$('stRefresh').onclick = () => window.webkit.messageHandlers.time.postMessage('refreshScreenTime');
+
+// Versions before 3.0 set a Screen Time passcode during locks. If one was left on, show it so it
+// can be turned off by hand.
+function renderLeftover() {
+  const p = S.leftoverPasscode;
+  $('leftover').hidden = !p;
+  if (p) $('leftoverCode').textContent = p.other ? `${p.code} (or ${p.other})` : p.code;
+}
+$('leftoverDone').onclick = () => act('/api/screentime/passcode/forget', {}, 'Forgotten.');
 $('filter').addEventListener('input', () => renderBlocks());
 
 function renderLock() {
@@ -279,15 +315,13 @@ function renderLock() {
     $('lockedTitle').textContent = lock.hard ? 'Locked in hard mode' : 'Locked';
     $('lockedHint').textContent = `Until ${when(lock.endsAt)}. You can turn more blocks on, but nothing that's on can be turned off.`
       + (lock.keepAfter ? ' They stay on after the timer ends.' : ' They turn off when the timer ends.')
-      + (lock.hard ? ' Your account is not an admin until then.' : '')
-      + (S.screenTime && S.screenTime.passcodeHeld ? ' Screen Time is passcode-locked until then; apps you turn on now stay blocked on this Mac only.' : '');
+      + (lock.hard ? ' Your account is not an admin until then.' : '');
     const em = lock.emergency;
     $('emIdle').hidden = !!em;
     renderEmTarget();
     if (em) {
       $('emTypingFor').textContent = em.blockId
-        ? `Unlocking ${em.blockName || 'one app'} on this Mac only. Everything else stays locked.`
-          + (S.screenTime && S.screenTime.passcodeHeld ? ' Its limit on your iPhone and iPad stays until the lock ends, because the Screen Time passcode does.' : '')
+        ? `Unlocking ${em.blockName || 'one app'}. Everything else stays locked.`
         : 'Unlocking everything.';
     }
     $('emTyping').hidden = !(em && em.challenge);
@@ -345,16 +379,11 @@ function lockLabel() {
   return h && mm ? `${h} h ${mm} min` : h ? `${h} h` : `${mm} min`;
 }
 
-let autoImportTried = false;
 function apply(status) {
   S = status;
-  // First open inside Time.app: fill the list from Screen Time automatically.
-  if (inApp && !autoImportTried && S.screenTime && S.screenTime.needsRefresh) {
-    autoImportTried = true;
-    window.webkit.messageHandlers.time.postMessage('refreshScreenTime');
-  }
   offset = S.now - Date.now();
   renderBlocks();
+  renderBaskets();
   renderLock();
   renderDial();
   renderEmergencyWait();

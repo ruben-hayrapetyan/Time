@@ -65,14 +65,16 @@ async function refreshInstalled() {
   try { installedCache = await installedApps(); } catch (e) { log(`app scan failed: ${e.message}`); }
 }
 
-// Once Screen Time has been imported, its list is the block list. Before that (or if the
-// page is opened in a browser without Time.app), the built-in presets stand in.
+// Versions before 3.0 read a list from Screen Time (all devices). Installs that have one keep it,
+// minus the entries with nothing to block on this Mac (phone-only apps; the iPhone app covers those).
+// Everyone else gets the built-in presets, plus whatever they add.
 function screenTimeBlocks() {
   const { importedAt, items } = state.screenTime;
   return Object.values(items)
     .filter((it) => !st.isNeverLock(it.name) && !st.isSystem(it.name))
     .filter((it) => it.lastSeen === importedAt || state.enabled['st-' + st.slug(it.name)])
     .map((it) => st.toBlock(it, installedCache))
+    .filter((b) => b.bundleIds.length || b.domains.length || isLocked(b.id))
     .sort((a, b) => b.seconds - a.seconds);
 }
 
@@ -84,29 +86,6 @@ function allBlocks() {
   return [...fromScreenTime, ...presets, ...state.custom.map((b) => ({ ...b, custom: true, source: 'custom' }))];
 }
 
-function importScreenTime(raw) {
-  const items = st.sanitizeItems(raw);
-  if (!items.length) throw new UserError('Screen Time returned no apps.');
-  const now = clock.now();
-  // A fresh read replaces the old one; apps you've turned on are kept even if they drop out.
-  for (const [name, it] of Object.entries(state.screenTime.items)) {
-    if (!state.enabled['st-' + st.slug(name)]) delete state.screenTime.items[name];
-    else it.lastSeen = now;
-  }
-  for (const it of items) state.screenTime.items[it.name] = { ...it, lastSeen: now };
-  state.screenTime.importedAt = now;
-  // Carry toggles made before the first import over to the matching Screen Time app.
-  for (const preset of cfg.PRESETS) {
-    if (!state.enabled[preset.id]) continue;
-    const match = screenTimeBlocks().find((b) => b.shortName.toLowerCase() === preset.name.toLowerCase() || b.shortName.toLowerCase() === preset.id);
-    if (!match) continue;
-    state.enabled[match.id] = true;
-    if (lockActive() && state.lock.lockedIds.includes(preset.id) && !state.lock.lockedIds.includes(match.id)) state.lock.lockedIds.push(match.id);
-    if (!isLocked(preset.id)) state.enabled[preset.id] = false;
-  }
-  save();
-  log(`imported ${items.length} apps from Screen Time`);
-}
 const findBlock = (id) => allBlocks().find((b) => b.id === id);
 const lockActive = () => !!state.lock && clock.now() < state.lock.endsAt;
 const isLocked = (id) => lockActive() && state.lock.lockedIds.includes(id);
@@ -121,6 +100,20 @@ function setEnabled(id, on) {
   state.enabled[id] = !!on;
   // Anything switched on during a lock joins the lock.
   if (on && lockActive() && !state.lock.lockedIds.includes(id)) state.lock.lockedIds.push(id);
+  save();
+  enforceNow();
+}
+
+// A whole category at once ("Block all"). Locked blocks are left alone when switching off.
+function setEnabledMany(ids, on) {
+  if (!Array.isArray(ids) || !ids.length || ids.length > 2000) throw new UserError('Nothing to change.');
+  const blocks = ids.map((id) => findBlock(id));
+  if (blocks.some((b) => !b)) throw new UserError('Unknown block.');
+  for (const b of blocks) {
+    if (!on && isLocked(b.id)) continue;
+    state.enabled[b.id] = !!on;
+    if (on && lockActive() && !state.lock.lockedIds.includes(b.id)) state.lock.lockedIds.push(b.id);
+  }
   save();
   enforceNow();
 }
@@ -179,59 +172,28 @@ function extendLock(minutes) {
     return hard.rotateKeeper(endsAt).then(() => {
       state.lock.endsAt = endsAt;
       save();
-      timelockPasscode();
     }, (e) => { throw new UserError(`Couldn't extend hard mode (needs internet): ${e.message}`); });
   }
   state.lock.endsAt = endsAt;
   save();
-  timelockPasscode();
 }
 
-// ---------- Screen Time passcode ----------
-// When a lock reaches the iPhone, Time.app also turns on a random Screen Time passcode, so
-// "Ignore Limit" there asks for a code nobody knows. Time.app hands the code to the service
-// before typing it in; the service writes it to its root-only state file and a drand-locked
-// copy (for recover.js), and only gives it back once no lock is running.
+// ---------- leftover Screen Time passcode ----------
+// Versions before 3.0 set a random Screen Time passcode during a lock, and Time.app turned it off
+// afterwards. If one was left behind, the page shows it (once no lock is running) so it can be
+// turned off by hand, and "Done" forgets it.
 
-function keepPasscode(code) {
-  code = String(code ?? '');
-  if (!/^\d{4}$/.test(code)) throw new UserError('A Screen Time passcode is 4 digits.');
-  if (state.stPasscode) {
-    if (state.stPasscode.code === code) return;
-    throw new UserError('Time already holds a Screen Time passcode.');
-  }
-  if (!lockActive()) throw new UserError('No lock is running.');
-  state.stPasscode = { code, since: clock.now() };
-  save();
-  log('holding a new Screen Time passcode');
-  timelockPasscode();
+function leftoverPasscode() {
+  return state.stPasscode && !lockActive() ? { code: state.stPasscode.code, other: state.stPasscode.next || null } : null;
 }
 
-// Best effort: offline, the copy is skipped and the state file is the only record.
-function timelockPasscode() {
-  const held = state.stPasscode;
-  if (!held || !lockActive()) return;
-  const endsAt = state.lock.endsAt;
-  hard.timelock(held.code, endsAt).then(({ round, ciphertext }) => {
-    fs.mkdirSync(path.dirname(cfg.paths.passcodeRecovery), { recursive: true });
-    fs.writeFileSync(cfg.paths.passcodeRecovery, JSON.stringify({ what: 'Screen Time passcode', unlocksAt: new Date(endsAt).toISOString(), round, ciphertext }, null, 2), { mode: 0o644 });
-  }, (e) => log(`couldn't time-lock the Screen Time passcode (offline?): ${e.message}`));
-}
-
-function revealPasscode() {
-  if (!state.stPasscode) throw new UserError('Time holds no Screen Time passcode.');
-  if (lockActive()) throw new UserError(`The Screen Time passcode stays locked until ${fmt(state.lock.endsAt)}.`);
-  return state.stPasscode.code;
-}
-
-function forgetPasscode(code) {
+function forgetPasscode() {
   if (lockActive()) throw new UserError('A lock is running.');
-  if (state.stPasscode && state.stPasscode.code === String(code)) {
-    state.stPasscode = null;
-    save();
-    try { fs.unlinkSync(cfg.paths.passcodeRecovery); } catch {}
-    log('Screen Time passcode turned off and forgotten');
-  }
+  if (!state.stPasscode) return;
+  state.stPasscode = null;
+  save();
+  try { fs.unlinkSync(cfg.paths.passcodeRecovery); } catch {}
+  log('leftover Screen Time passcode forgotten');
 }
 
 async function finishLock(reason) {
@@ -329,6 +291,41 @@ function addCustom({ name, bundleIds = [], domains = [] }) {
   return id;
 }
 
+// Baskets: named sets of blocks, saved from whatever is on, switched on together with one click.
+// Applying one only ever adds (it never switches anything off), so it's safe mid-lock.
+function basketView() {
+  const known = new Map(allBlocks().map((b) => [b.id, b]));
+  return (state.baskets || []).map((k) => {
+    const ids = k.ids.filter((id) => known.has(id));
+    return { id: k.id, name: k.name, ids, on: ids.filter((id) => state.enabled[id]).length };
+  });
+}
+
+function saveBasket(name) {
+  name = String(name || '').trim().slice(0, 30);
+  if (!name) throw new UserError('Give the basket a name.');
+  const ids = enabledBlocks().map((b) => b.id);
+  if (!ids.length) throw new UserError('Turn on the apps you want in the basket first.');
+  state.baskets = state.baskets || [];
+  if (state.baskets.length >= 30) throw new UserError('Delete a basket first (30 at most).');
+  // Saving under a name that exists replaces that basket.
+  const old = state.baskets.find((k) => k.name.toLowerCase() === name.toLowerCase());
+  if (old) { old.name = name; old.ids = ids; } else state.baskets.push({ id: 'k-' + crypto.randomBytes(4).toString('hex'), name, ids });
+  save();
+}
+
+function applyBasket(id) {
+  const k = basketView().find((x) => x.id === id);
+  if (!k) throw new UserError('Unknown basket.');
+  if (!k.ids.length) throw new UserError(`None of the apps in ${k.name} are in your list any more.`);
+  setEnabledMany(k.ids, true);
+}
+
+function removeBasket(id) {
+  state.baskets = (state.baskets || []).filter((k) => k.id !== id);
+  save();
+}
+
 function removeCustom(id) {
   if (isLocked(id) || state.enabled[id]) throw new UserError('Turn it off before deleting it.');
   state.custom = state.custom.filter((c) => c.id !== id);
@@ -398,19 +395,15 @@ function status() {
       },
     },
     hardActive: !!state.hard?.active,
-    screenTime: {
-      importedAt: state.screenTime.importedAt,
-      count: Object.keys(state.screenTime.items).length,
-      // Lists read by older versions have no categories; read again to get them.
-      needsRefresh: !state.screenTime.importedAt || Object.values(state.screenTime.items).some((it) => !('category' in it)),
-      passcodeHeld: !!state.stPasscode,
-    },
+    screenTime: { importedAt: state.screenTime.importedAt },
+    leftoverPasscode: leftoverPasscode(),
     blocks: allBlocks().map((b) => ({
-      id: b.id, name: b.name, custom: b.custom, bundleIds: b.bundleIds, domains: b.domains, screenTimeName: b.screenTimeName || null,
-      source: b.source, seconds: b.seconds ?? null, hasLimit: !!b.hasLimit,
+      id: b.id, name: b.name, custom: b.custom, bundleIds: b.bundleIds, domains: b.domains,
+      source: b.source, seconds: b.seconds ?? null,
       category: b.category || (b.custom ? 'Your own' : 'Other'), used: b.used !== false,
       enabled: !!state.enabled[b.id], locked: isLocked(b.id),
     })),
+    baskets: basketView(),
     neverLock: cfg.NEVER_LOCK,
     limits: cfg.LIMITS,
     dev: cfg.DEV,
@@ -469,12 +462,13 @@ async function handle(req, res) {
   if (req.method !== 'POST' || req.headers['x-time'] !== '1') return send(res, 404, { error: 'Not found' });
   const body = await readJson(req);
   let m;
-  if (p === '/api/screentime/passcode/reveal') return send(res, 200, { code: revealPasscode() });
-  if ((m = p.match(/^\/api\/blocks\/([\w-]+)$/))) setEnabled(m[1], body.enabled);
+  if (p === '/api/blocks/bulk') setEnabledMany(body.ids, body.enabled);
+  else if ((m = p.match(/^\/api\/blocks\/([\w-]+)$/))) setEnabled(m[1], body.enabled);
+  else if (p === '/api/baskets') saveBasket(body.name);
+  else if ((m = p.match(/^\/api\/baskets\/([\w-]+)\/apply$/))) applyBasket(m[1]);
+  else if ((m = p.match(/^\/api\/baskets\/([\w-]+)\/delete$/))) removeBasket(m[1]);
   else if (p === '/api/custom') addCustom(body);
-  else if (p === '/api/screentime/import') importScreenTime(body.items);
-  else if (p === '/api/screentime/passcode') keepPasscode(body.code);
-  else if (p === '/api/screentime/passcode/forget') forgetPasscode(body.code);
+  else if (p === '/api/screentime/passcode/forget') forgetPasscode();
   else if ((m = p.match(/^\/api\/custom\/([\w-]+)\/delete$/))) removeCustom(m[1]);
   else if (p === '/api/lock') await startLock(body);
   else if (p === '/api/lock/extend') await extendLock(body.minutes);

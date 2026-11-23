@@ -1,5 +1,5 @@
 'use strict';
-// Turns the list Time.app reads from Screen Time (App & Website Activity, all devices,
+// Turns the Screen Time list that versions before 3.0 read (App & Website Activity, all devices,
 // this week) into blocks. Each one gets whatever Mac enforcement we can find for it:
 // the Mac app with the same name, and known websites for that service.
 const { PRESETS } = require('./config');
@@ -78,28 +78,10 @@ function toBlock(item, installed) {
     shortName: base || item.name,
     source: 'screentime',
     seconds: item.seconds,
-    hasLimit: !!item.hasLimit,
     bundleIds: domainItem ? [] : macBundleIds(base, item.name, installed),
     domains: domainItem ? [item.name.toLowerCase()] : hintDomains(base),
     custom: false,
   };
 }
 
-function sanitizeItems(raw) {
-  if (!Array.isArray(raw)) throw new Error('items must be a list');
-  const out = [];
-  for (const it of raw.slice(0, 1000)) {
-    const name = String(it?.name ?? '').trim().slice(0, 200);
-    if (!name) continue;
-    out.push({
-      name,
-      seconds: Math.max(0, Math.floor(Number(it.seconds) || 0)),
-      hasLimit: !!it.hasLimit,
-      category: it.category ? String(it.category).slice(0, 60) : null,
-      source: it.source === 'limits' ? 'limits' : 'activity',
-    });
-  }
-  return out;
-}
-
-module.exports = { isNeverLock, isSystem, isDomain, isBundleId, displayName, baseName, toBlock, sanitizeItems, slug };
+module.exports = { isNeverLock, isSystem, isDomain, isBundleId, displayName, baseName, toBlock, slug };

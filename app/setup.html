@@ -40,6 +40,7 @@
   </div>
   <div id="update" hidden>
     <h1>Update Time</h1>
+    <p id="lockedNote" hidden style="margin-bottom:12px">Your lock keeps running through the update. Blocks are off for a few seconds while the service restarts.</p>
   </div>
   <div id="starting" hidden>
     <h1>Starting Time…</h1>
@@ -63,6 +64,7 @@
   for (const id of ['install', 'update', 'starting']) document.getElementById(id).hidden = id !== mode;
   document.getElementById('details').hidden = mode === 'starting';
   document.getElementById('go').hidden = mode === 'starting';
+  document.getElementById('lockedNote').hidden = !q.get('locked');
   if (mode === 'update') document.getElementById('go').textContent = `Update to ${q.get('v')}`;
 
   function setBusy(b) {

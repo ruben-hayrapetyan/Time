@@ -1,21 +1,17 @@
 #!/bin/bash
-# Builds Time.app into build/ and copies it to /Applications.  ./build-app.sh [--no-install] [--dev] [--release]
-# --dev compiles in the developer flags (--ax, --read-screentime, --add-limit, ...).
+# Builds Time.app into build/ and copies it to /Applications.  ./build-app.sh [--no-install] [--release]
 # --release builds for both Apple silicon and Intel and zips the app for a GitHub release, without installing.
 set -euo pipefail
 
 INSTALL=1
 RELEASE=0
-SWIFT_DEFINES=""
 for arg in "$@"; do
   case "$arg" in
     --no-install) INSTALL=0 ;;
-    --dev) SWIFT_DEFINES="-DTIME_DEVTOOLS" ;;
     --release) RELEASE=1; INSTALL=0 ;;
     *) echo "Error: unknown option $arg" >&2; exit 1 ;;
   esac
 done
-[ "$RELEASE" = 1 ] && [ -n "$SWIFT_DEFINES" ] && { echo "Error: --release can't include --dev" >&2; exit 1; }
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 OUT="$REPO/build/Time.app"
@@ -33,9 +29,9 @@ ARCHS="$(uname -m)"
 
 echo "==> Compiling ($ARCHS)"
 for arch in $ARCHS; do
-  swiftc -O -swift-version 5 -target "$arch-apple-macos13.0" $SWIFT_DEFINES \
+  swiftc -O -swift-version 5 -target "$arch-apple-macos13.0" \
     -framework AppKit -framework WebKit \
-    -o "$REPO/build/Time-$arch" "$REPO/app/main.swift" "$REPO/app/axkit.swift" "$REPO/app/screentime.swift"
+    -o "$REPO/build/Time-$arch" "$REPO/app/main.swift"
 done
 lipo -create $(for arch in $ARCHS; do echo "$REPO/build/Time-$arch"; done) -output "$OUT/Contents/MacOS/Time"
 
@@ -79,17 +75,14 @@ cat > "$OUT/Contents/Info.plist" <<EOF
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
-  <key>NSAppleEventsUsageDescription</key><string>Time uses this to read and change your Screen Time settings.</string>
   <key>NSHumanReadableCopyright</key><string>Personal build</string>
 </dict>
 </plist>
 EOF
 
-# A stable local certificate keeps macOS permissions (Accessibility) across rebuilds.
+# Signed with the "Time Local Signing" certificate if there is one, ad hoc otherwise.
 IDENTITY="Time Local Signing"
 security find-identity -p codesigning | grep -q "\"$IDENTITY\"" || IDENTITY="-"
-# Releases need the same certificate every time, or each update loses its Accessibility permission.
-[ "$RELEASE" = 1 ] && [ "$IDENTITY" = "-" ] && { echo "Error: --release needs the \"Time Local Signing\" certificate" >&2; exit 1; }
 echo "==> Signing ($IDENTITY)"
 codesign --force --deep --sign "$IDENTITY" "$OUT" >/dev/null 2>&1
 codesign --verify --deep "$OUT"

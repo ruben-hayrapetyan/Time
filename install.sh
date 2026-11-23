@@ -14,19 +14,58 @@ USER_NAME="${SUDO_USER:-}"
 USER_UID="$(id -u "$USER_NAME")"
 REPO="$(cd "$(dirname "$0")" && pwd)"
 
-# Updating mid-lock would be a way around the lock.
-if [ -f "$DEST/state/state.json" ] && "$DEST/bin/node" -e '
-  const s = require(process.argv[1]);
-  process.exit(s.lock && s.lock.endsAt > Math.max(Date.now(), s.lastTrusted || 0) ? 0 : 1);
-' "$DEST/state/state.json" 2>/dev/null; then
-  die "a lock is running. Install updates after it ends."
+# An update can go in while a lock runs: the lock lives in state/state.json, which is kept, and the
+# new service picks it up when it starts (blocks are off for the few seconds in between).
+# Hard mode locks wait: they took your admin rights away, and the timekeeper password stays sealed.
+LOCKED=0
+if [ -f "$DEST/state/state.json" ] && [ ! -x "$DEST/bin/node" ]; then
+  # A damaged install (no Node to read the state with): repair it, leaving the timekeeper password alone.
+  LOCKED=1
+elif [ -f "$DEST/state/state.json" ]; then
+  case "$("$DEST/bin/node" -e '
+    const s = require(process.argv[1]);
+    const on = s.lock && s.lock.endsAt > Math.max(Date.now(), s.lastTrusted || 0);
+    console.log(!on ? "none" : s.lock.hard ? "hard" : "soft");
+  ' "$DEST/state/state.json" 2>/dev/null || echo unknown)" in
+    none) ;;
+    soft) LOCKED=1 ;;
+    hard) die "a hard mode lock is running. Install updates after it ends." ;;
+    # Unreadable state on an existing install: don't risk dropping a lock.
+    *) die "couldn't read Time's state to check for a lock. See $DEST/state/state.json" ;;
+  esac
 fi
+
+loaded() { launchctl print "system/$1" >/dev/null 2>&1; }
+
+# The service and its watchdog reload each other (always, during a lock), so stopping one can bring
+# the other back. Keep stopping both until neither is left.
+stop_services() {
+  for _ in $(seq 1 15); do
+    for l in "${LABELS[@]}"; do launchctl bootout "system/$l" 2>/dev/null || true; done
+    sleep 1
+    loaded com.time.blocker || loaded com.time.watchdog || return 0
+  done
+  die "couldn't stop the running Time service."
+}
+
+# If anything fails after the service is stopped, start whatever is installed again, so a failed
+# update never leaves a lock unenforced.
+STOPPED=0
+restart_on_failure() {
+  [ "$STOPPED" = 1 ] || return 0
+  rm -f "$DEST/state/uninstalling"
+  for l in "${LABELS[@]}"; do
+    loaded "$l" || launchctl bootstrap system "/Library/LaunchDaemons/$l.plist" 2>/dev/null || true
+  done
+}
+trap restart_on_failure EXIT
 
 echo "==> Installing Time for $USER_NAME"
 
 # Stop any running copy (the watchdog stands down while this flag exists).
 if [ -d "$DEST/state" ]; then touch "$DEST/state/uninstalling"; fi
-for l in "${LABELS[@]}"; do launchctl bootout "system/$l" 2>/dev/null || true; done
+STOPPED=1
+stop_services
 chflags -R noschg "$DEST" /Library/LaunchDaemons/com.time.*.plist 2>/dev/null || true
 
 mkdir -p "$DEST"/{bin,state,recovery,launchd}
@@ -58,7 +97,9 @@ chown -R root:wheel "$DEST"
 chmod -R go-w "$DEST"
 
 echo "==> Setting up the hidden timekeeper admin account (hard mode's fallback)"
+KEEPER_NEW=0
 if ! dscl . -read /Users/timekeeper UniqueID >/dev/null 2>&1; then
+  KEEPER_NEW=1
   sysadminctl -addUser timekeeper -fullName "Time Keeper" -password "$(openssl rand -base64 24)" \
     -home /private/var/timekeeper -admin 2>&1 | grep -v -i 'secure token' || true
   dscl . -read /Users/timekeeper UniqueID >/dev/null 2>&1 || die "could not create the timekeeper account."
@@ -66,9 +107,12 @@ fi
 dscl . -create /Users/timekeeper IsHidden 1
 dseditgroup -o edit -a timekeeper -t user admin
 # Fresh random password, time-locked to "now" so it can be recovered whenever no lock is running.
-"$DEST/bin/node" -e '
-  require(process.argv[1]).rotateKeeper(Date.now()).then(() => process.exit(0), (e) => { console.error(e.message); process.exit(1); });
-' "$DEST/src/hardmode.js" || die "could not set the timekeeper password (are you online?)."
+# Mid-lock the existing one is left as it is: rotating needs the internet, and the service is stopped.
+if [ "$LOCKED" = 0 ] || [ "$KEEPER_NEW" = 1 ]; then
+  "$DEST/bin/node" -e '
+    require(process.argv[1]).rotateKeeper(Date.now()).then(() => process.exit(0), (e) => { console.error(e.message); process.exit(1); });
+  ' "$DEST/src/hardmode.js" || die "could not set the timekeeper password (are you online?)."
+fi
 
 echo "==> Registering the background service"
 plist() {
@@ -97,7 +141,11 @@ for l in "${LABELS[@]}"; do
   install -o root -g wheel -m 644 "$DEST/launchd/$l.plist" "/Library/LaunchDaemons/$l.plist"
 done
 rm -f "$DEST/state/uninstalling"
-for l in "${LABELS[@]}"; do launchctl bootstrap system "/Library/LaunchDaemons/$l.plist"; done
+# One of the pair may already have loaded the other by the time its turn comes.
+for l in "${LABELS[@]}"; do
+  launchctl bootstrap system "/Library/LaunchDaemons/$l.plist" 2>/dev/null || loaded "$l" || die "couldn't start $l."
+done
+STOPPED=0
 
 # Make the program files undeletable without first clearing this flag (layer 2 friction).
 chflags -R schg "$DEST/src" "$DEST/ui" "$DEST/bin" "$DEST/node_modules" "$DEST/launchd" \

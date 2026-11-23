@@ -63,15 +63,25 @@
 
     <p class="toast" id="toast" role="status" aria-live="polite"></p>
 
+    <section class="leftover" id="leftover" hidden>
+      <h2>Screen Time still has Time's passcode</h2>
+      <p>An older version of Time turned on a Screen Time passcode during a lock and didn't get to turn it off. The passcode is <strong class="mono" id="leftoverCode"></strong>. Turn it off in System Settings → Screen Time → Lock Screen Time Settings, and remove any 1-minute App Limits Time added. Then click Done.</p>
+      <button class="ghost" id="leftoverDone">Done</button>
+    </section>
+
     <section class="blocks" aria-labelledby="blocksTitle">
       <div class="section-head">
         <h2 id="blocksTitle">Your apps</h2>
         <p class="hint" id="stSource"></p>
         <div class="row-actions">
-          <button class="ghost" id="stRefresh" hidden>Refresh from Screen Time</button>
           <input class="filter" id="filter" type="search" placeholder="Find an app" aria-label="Find an app">
         </div>
         <p class="hint" id="stNote"></p>
+        <div class="baskets" id="baskets" aria-label="Baskets"></div>
+        <form class="row-actions" id="basketForm">
+          <input id="basketName" maxlength="30" placeholder="Name, e.g. Deep work" aria-label="Basket name">
+          <button class="ghost" type="submit" id="basketSave">Save what's on as a basket</button>
+        </form>
       </div>
       <div id="groups"></div>
       <p class="never" id="neverLock"></p>
